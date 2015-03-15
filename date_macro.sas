@@ -71,6 +71,9 @@
 %MEND adjust_date;
 
 
+
+	
+
 /* module 2: create a subsets and new global macro */
 /* Input: 
 	(1) raw_table: datasets

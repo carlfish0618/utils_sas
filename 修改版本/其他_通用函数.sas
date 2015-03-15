@@ -19,11 +19,11 @@
 
 %MACRO get_sector_info(stock_table, mapping_table, output_stock_table);
 	PROC SQL;
-		CREAET TABLE &output_stock_table. AS
+		CREATE TABLE &output_stock_table. AS
 		SELECT A.*, B.indus_code, B.indus_name
 		FROM &stock_table. A LEFT JOIN &mapping_table. B
 		ON A.stock_code = B.stock_code AND A.end_date = B.end_date   
-		ORDER BY A.end_date, B.o_code;
+		ORDER BY A.end_date, B.indus_code;
 	QUIT;
 
 %MEND get_sector_info;

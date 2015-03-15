@@ -1,74 +1,64 @@
-/* module 1:  adjust date to business date */
-/* another algorithmn: join event_day with busday on (event_day)<= busday, pick up the minimum one */
 
-/* Input: (1) busday_table: dataset (business date)
-		  (2) raw_table: dataset 
-		  (3) colname : initial row name for the date in raw_table(character) */
 
-/* Output: updated raw_table  */
+/*** 模块1: 将非交易日调整为交易日 **/
+/** 针对旧版本中的 adjust_date进行了修改 */
+/** 输入:
+(1) busday_table(交易日列表): date
+(2) raw_table: 待调整的表格
+(3) colname(character): 在待调整表格中的日期列名称
+(4) is_forward(numeric): 1- 往未来调整 0- 往过去调整
+**/
 
-/* Dataset Detail:
-	(1) (input) busday_table: date
-	(2) (input) raw_table: &colname and other columns
-	(3) (output) updated raw_table (added 2 columns: adj_&colname, &colname._is_busday ) */
-
-%MACRO adjust_date(busday_table = , raw_table = ,colname = );  /* busday_table: date */
+/**　输出：output_table: 原有的列 + adj_&colname, &colname._is_busday两列。前者为调整后的日期，后者标注原始日期是否为交易日 */
+%MACRO adjust_date_modify(busday_table , raw_table ,colname,  output_table, is_forward = 1 );  /* busday_table: date */
 	PROC SQL;
 		CREATE TABLE teventday AS
 			SELECT DISTINCT &colname 
 			FROM &raw_table
 		QUIT;
-
-	/* merge with busday*/
-	PROC SQL;
-		CREATE TABLE tall_day AS
-		SELECT A.date AS busday_date, B.*
-		FROM  &busday_table A FULL JOIN teventday B
-		ON A.date = B.&colname 
-		ORDER BY A.date;
-	RUN;
-
-	DATA tall_day(keep = busday_date &colname._is_busday);
-		SET tall_day;
-		IF busday_date =. THEN &colname._is_busday = 0;
-		ELSE &colname._is_busday = 1;
-
-		IF busday_date = . THEN busday_date = &colname;
-	RUN;
-
-	PROC SORT DATA = tall_day;
-		BY descending busday_date;  /* descending */
-	RUN;
-
-	/* adjust non-business day for nearest coming business day*/
-	DATA tall_day;
-		SET tall_day;
-		RETAIN adj_&colname;
-		IF _N_ = 1 and &colname._is_busday = 0 THEN adj_&colname = .;
-		IF &colname._is_busday = 1 THEN adj_&colname = busday_date;
-		FORMAT adj_&colname mmddyy10.;
-	RUN;
-
-	PROC SQL;
-		CREATE TABLE ttmp AS
-		SELECT A.*, B.adj_&colname, B.&colname._is_busday
-		FROM &raw_table A LEFT JOIN tall_day B
-		ON A.&colname = B.busday_date
-		ORDER BY A.&colname;
 	QUIT;
-
-	DATA &raw_table;
-		SET ttmp;
-		IF missing(&colname.) THEN DO;
-			adj_&colname = . ;
-			&colname._is_busday = .;
-		END;
+	%IF %SYSEVALF(&is_forward. =1) %THEN %DO;
+		PROC SQL;
+			CREATE TABLE tmp AS
+			SELECT A.&colname., B.date AS adj_&colname.
+			FROM teventday A LEFT JOIN &busday_table. B
+			ON A.&colname.<= B.date 
+			GROUP BY A.&colname.
+			HAVING B.date = min(B.date)
+			ORDER BY A.&colname.;
+		QUIT;
+	%END;
+	%ELSE %DO;
+		PROC SQL;
+			CREATE TABLE tmp AS
+			SELECT A.&colname., B.date AS adj_&colname.
+			FROM teventday A LEFT JOIN &busday_table. B
+			ON A.&colname.>= B.date 
+			GROUP BY A.&colname.
+			HAVING B.date = max(B.date)
+			ORDER BY A.&colname.;
+		QUIT;
+	%END;
+		
+	DATA tmp;
+		SET tmp;
+		IF &colname. = adj_&colname. THEN &colname._is_busday =1;
+		ELSE &colname._is_busday = 0;
 	RUN;
-
 	PROC SQL;
-		DROP TABLE ttmp, teventday, tall_day;
+		CREATE TABLE tmp2 AS
+		SELECT A.*, B.adj_&colname., B.&colname._is_busday
+		FROM &raw_table. A LEFT JOIN tmp B
+		ON A.&colname. = B.&colname.
+		ORDER BY A.&colname.;
 	QUIT;
-%MEND adjust_date;
+	DATA &output_table.;
+		SET tmp2;
+	RUN;
+	PROC SQL;
+		DROP TABLE tmp, tmp2, teventday;
+	QUIT;
+%MEND adjust_date_modify;
 
 
 /* module 2: create a subsets and new global macro */

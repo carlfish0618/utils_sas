@@ -78,6 +78,8 @@
 	   (SELECT end_date FROM &adjust_date_table.)  /* 只取调整日 */
 		ORDER BY end_date;
 	QUIT;
+
+		
 	PROC SQL;
 		DROP TABLE tt, tmp2;
 	QUIT;
