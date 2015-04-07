@@ -201,6 +201,8 @@
 /** 新增辅助字段: pre_date/pre_price/price/pre_close/close/adjust_price */
 /** 新增程序检验字段: mark(mark =1 表示没有出现异常点，否则需警惕用前收价格计算的收益和权重是否正确) */
 
+%LET daily_stock_pool = test_stock_pool;
+%LET adjust_date_table = adj_busdate;
 
 %MACRO cal_stock_wt_ret(daily_stock_pool, adjust_date_table, output_stock_pool);
 	/* Step1: 计算单日收益率，从调整日至今的累计收益率等 */
@@ -237,12 +239,15 @@
 
 	DATA tt_summary_stock;
 		SET tt_summary_stock;
-		IF not missing(price) THEN accum_ret = (price/adjust_price - 1)*100;  /** 调仓股票池必须先保证adust_price~=0 或者缺失 */
-		ELSE accum_ret = 0;   /** 这里有一个问题：如果在某个持有期间，股票退市了，price缺失。这时候其实有一段收益率。整个区间的累计收益率不一定为0 */
-		IF not missing(pre_price) THEN pre_accum_ret = (pre_price/adjust_price-1)*100;
-		ELSE pre_accum_ret = 0;
-		IF not missing(pre_price) AND not missing(price) THEN daily_ret = (price/pre_price - 1)*100; 
-		ELSE daily_ret = 0;
+		/**　由于在最后一天发生价格缺失会强制退出，所以这一天的价格就认为与前一天一致。（前一天pre_price不会为负）*/
+		IF missing(price) OR missing(close) OR missing(pre_close) THEN DO;
+			price = pre_price;
+			close = pre_price;
+			pre_close = pre_price;
+		END;
+		accum_ret = (price/adjust_price - 1)*100;  /** 调仓股票池必须先保证adust_price~=0 或者缺失 */
+		pre_accum_ret = (pre_price/adjust_price-1)*100;
+		daily_ret = (price/pre_price - 1)*100; 
 	RUN;
 
 	/** ！！ 新增：基于close和pre_close计算累计收益 */
@@ -385,6 +390,7 @@
 
 	DATA tt_summary_stock;
 		SET tt_summary_stock;
+		IF missing(price) THEN price = pre_price; /** pre_price总不会缺失或者为0 */
 		accum_ret = (price/adjust_price - 1)*100;
 		pre_accum_ret = (pre_price/adjust_price-1)*100;
 		daily_ret = (price/pre_price - 1)*100;  
@@ -532,7 +538,7 @@
 		CREATE TABLE tt_summary_day AS
 		SELECT date, sum(open_wt>0) AS nstock,
 /*		((sum(adjust_weight*accum_ret/100)+1)/(sum(adjust_weight*pre_accum_ret/100)+1)-1)*100 AS daily_ret_p,*/
-		sum(open_wt*daily_ret) AS daily_ret, 
+		sum(open_wt*daily_ret) AS daily_ret
 		FROM tt_stock_pool
 		GROUP BY date;
 	QUIT;
