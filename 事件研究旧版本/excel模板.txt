@@ -1,0 +1,165 @@
+
+'参数设置
+Public Const winLen As Integer = 60
+Public Const myDir As String = "D:\Research\DATA\output_data"
+Public Const myType As String = "o_name"
+Public Const eventName As String = "event"
+Public Const bm1 As String = "bm"
+Public Const bm2 As String = "indus"
+Public Const prefix As String = "all_" '全样本前缀
+
+
+' 衍生参数
+Public Const targetFile As String = eventName & "_" & myType & ".xls"
+Public Const resFile As String = eventName & "_" & myType & "_modify.xls"
+Public Const maxRow = 65536
+Public Const maxCol = 256
+Public Const sheet1 As String = myType & "_" & bm1  '分组结果
+Public Const sheet2 As String = myType & "_" & bm2
+
+
+
+' 跨模块使用
+Public typeNum As Integer
+
+'创建结果文件
+Sub createResFile()
+    
+    ' 打开目标文件
+    Workbooks.Open Filename:=myDir & "\" & targetFile
+    Dim targetWbk As Workbook
+    Set targetWbk = ActiveWorkbook
+    
+    ' 创建结果文件(弹出覆盖对话框，如果已存在该目标文件)
+    Dim resWbk As Workbook
+    Set resWbk = Workbooks.Add
+    targetWbk.Sheets(sheet1).Copy before:=resWbk.Sheets(1)
+    targetWbk.Sheets(sheet2).Copy before:=resWbk.Sheets(2)
+    targetWbk.Sheets(prefix & sheet1).Copy before:=resWbk.Sheets(3) '全样本
+    targetWbk.Sheets(prefix & sheet2).Copy before:=resWbk.Sheets(4)
+    resWbk.SaveAs Filename:=myDir & "\" & resFile, FileFormat:=xlNormal
+    
+    targetWbk.Close
+    resWbk.Close
+End Sub
+
+
+'修改结果文件
+Sub modifyResFile()
+    Workbooks.Open Filename:=myDir & "\" & resFile
+    Dim resWbk As Workbook
+    Set resWbk = ActiveWorkbook
+    
+    '删除不需要的sheet
+    Application.DisplayAlerts = False
+    'resWbk.Sheets("Sheet1").Delete
+    resWbk.Sheets("Sheet2").Delete
+    resWbk.Sheets("Sheet3").Delete
+    
+    Call filterType(resWbk, sheet1, bm1, "mean")
+    
+End Sub
+    
+'提取均值，中位数，胜率(允许不同的基准)
+Sub filterType(ByVal res_wbk As Workbook, ByVal sheet_name As String, ByVal bm_name As String, ByVal stat As String)
+    res_wbk.Activate
+    Dim tarSheet As Worksheet
+    Set tarSheet = res_wbk.Sheets(prefix & sheet_name)  '以全样本的窗口确定最终窗口数量
+    tarSheet.Select
+    
+    
+    Dim nRecord As Integer
+    nRecord = tarSheet.Cells(maxRow, 1).End(xlUp).Row - 1
+    
+    res_wbk.Sheets("Sheet1").Select
+    Sheets("Sheet1").Range(Cells(1, 1), Cells(maxRow, maxCol)).ClearContents
+    
+    tarSheet.Select
+    tarSheet.Range(Cells(2, 1), Cells(nRecord + 1, 2)).Select
+    Selection.Copy Destination:=res_wbk.Sheets("Sheet1").Cells(2, 1)
+    
+    '事件窗口
+    Sheets("Sheet1").Select
+    Sheets("Sheet1").Range(Cells(2, 1), Cells(nRecord + 1, 1)).AdvancedFilter Action:=xlFilterCopy, CopyToRange:=Cells(2, 4), Unique:=True
+    '排序事件窗口
+    Sheets("Sheet1").Range(Cells(2, 4), Cells(nRecord + 1, 4)).Sort Key1:=Range(Cells(2, 4), Cells(nRecord + 1, 4)), Order1:=xlAscending, Header:=xlNo
+   
+    
+    '新工作表
+    Dim resSheet As String
+    
+    Select Case stat
+        Case "mean"
+            resSheet = bm_name & "_mean"
+            colIndex = 3
+        Case "median"
+            resSheet = bm_name & "_median"
+            colIndex = 9
+        Case "hitratio"
+            resSheet = bm_name & "_hitratio"
+            colIndex = 4
+        Case "num"
+            resSheet = "num"
+            colIndex = 2
+        Case Else
+            MsgBox "统计指标错误"
+    End Select
+    
+    res_wbk.Activate
+    
+    res_wbk.Sheets.Add(before:=res_wbk.Sheets(1)).Name = resSheet
+    
+    Dim curSheet As Worksheet
+    Set curSheet = ActiveSheet
+    '窗口
+    curSheet.Select
+    curSheet.Cells(1, 1).Value = "win"
+    Sheets("Sheet1").Select
+    Sheets("Sheet1").Range(Cells(2, 4), Cells(nRecord + 1, 4)).Copy Destination:=curSheet.Cells(2, 1)
+    
+        
+    '统计窗口数量
+    Dim nWin As String
+    curSheet.Select
+    nWin = curSheet.Cells(maxRow, 1).End(xlUp).Row - 1
+    
+    
+    '全样本
+    curSheet.Cells(1, 2).Value = "All"
+    curSheet.Cells(2, 2).Select
+    Selection.FormularR1C1 = "=sumifs(tarSheet.R2C" & colIndex & ":R" & nWin & "C" & colIndex & ", RC1, tarSheet.R2C1:R" & nWin & "C1)"
+    curSheet.Cells(2.2).Select
+    Selection.AutoFill Destination:=curSheet.Range(Cells(2, 2), Cells(nWin + 1, 2))
+    
+    res.wbk.Close SaveChanges:=True
+    
+    
+    '类型
+    'Sheets("Sheet1").Range(Cells(2, 2), Cells(nRecord + 1, 2)).AdvancedFilter Action:=xlFilterCopy, CopyToRange:=Cells(2, 5), Unique:=True
+    'curSheet.Cells(1, 2).Value = "All"
+    'Sheets("Sheet1").Range(Cells(2, 5), Cells(nRecord + 1, 5)).Copy Destination:=curSheet.Cells(1, 3), Transpose:=True
+    'Dim nType As String
+    'nType = curSheet.Cells(1, maxCol).End(xlLeft).Column - 1  '包括全样本
+    
+    
+End Sub
+   
+   Dim sheet_name As String
+   Dim tmp1 As String
+   Dim tmp2 As String
+   for i = 2 To 7 * (nType+1) + 1
+		for j = 4 To 22
+			sheet_name = curSheet.Cells(i, 2).Value & '_' & Cells(i,3).Value
+			tmp1 = "countifs(" & sheet_name & "!R1C2:R1C" & nType+2 &", RC1," & sheet_name & "!R1C1:R" & nWin+1 & "C1, R1C)"
+			tmp2 = "sumifs(" & sheet_name & "!R2C2:R" & nWin+1 & "C" & nType+1 & ", sheet_name & "!R1C2:R1C" & nType+2 &", RC1," & sheet_name & "!R1C1:R" & nWin+1 & "C1, R1C)"
+			curSheet.Cells(i.j). FormulaR1C1 = "=IF(" & tmp1 & ">0," & tmp2 & "," & Chr(34) & Chr(34) & ")"
+		Next j
+	Next i
+			
+	
+    
+    
+    
+    
+
+
