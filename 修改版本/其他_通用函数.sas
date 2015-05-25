@@ -5,6 +5,7 @@
 (1) get_sector_info: 提取行业信息
 (2) get_stock_size: 提取市值、流通市值信息等
 (3) read_from_excel: 从Excel中读取文件
+(4) output_to_excel: 输出文件到Excel中
 ****/ 
 
 /** =======================================================================**/
@@ -99,7 +100,8 @@ options validvarname=any; /* 支持中文变量名 */
 	QUIT;
 %MEND get_stock_size;
 
-%MACRO read_from_excel(excel_path, output_table, sheet_name = Sheet1$,);
+/** 模块3： 从外部读入excel文件 */
+%MACRO read_from_excel(excel_path, output_table, sheet_name = Sheet1$);
 	PROC IMPORT OUT = &output_table.
             DATAFILE= "&excel_path." 
             DBMS=EXCEL REPLACE;
@@ -112,3 +114,13 @@ options validvarname=any; /* 支持中文变量名 */
 	RUN;
 %MEND read_from_excel;
 
+
+/** 模块4：输出到excel文件中 */
+/** 不允许replace */
+%MACRO output_to_excel(excel_path, input_table, sheet_name = Sheet1$);
+	LIBNAME myxls "&excel_path.";  /* external file */
+		DATA myxls.&sheet_name.;
+			SET &input_table.;
+		RUN;
+	LIBNAME myxls CLEAR;
+%MEND output_to_excel;
