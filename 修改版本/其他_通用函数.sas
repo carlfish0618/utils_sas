@@ -4,11 +4,13 @@
 /**** 函数列表:
 (1) get_sector_info: 提取行业信息
 (2) get_stock_size: 提取市值、流通市值信息等
+(3) read_from_excel: 从Excel中读取文件
 ****/ 
 
 /** =======================================================================**/
 
 
+options validvarname=any; /* 支持中文变量名 */
 
 /** 模块1: 提取行业信息 */
 /** 输入:
@@ -96,3 +98,17 @@
 		DROP TABLE tmp;
 	QUIT;
 %MEND get_stock_size;
+
+%MACRO read_from_excel(excel_path, output_table, sheet_name = Sheet1$,);
+	PROC IMPORT OUT = &output_table.
+            DATAFILE= "&excel_path." 
+            DBMS=EXCEL REPLACE;
+     	RANGE="&sheet_name."; 
+     	GETNAMES=YES;
+     	MIXED=NO;
+     	SCANTEXT=NO;
+     	USEDATE=YES;
+     	SCANTIME=YES;
+	RUN;
+%MEND read_from_excel;
+

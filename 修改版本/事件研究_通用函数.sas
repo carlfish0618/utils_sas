@@ -1,45 +1,78 @@
+/** ======================说明=================================================**/
+
+/*** 函数功能：提供与事件研究相关的函数。主要包括:
+(1) 过滤不符合条件的事件
+(2) 生成事件窗口（包含有重叠和无重叠版本）
+(2) 过滤事件窗口，并标注事件窗口的有效性
+(3) 计算事件窗口的收益率
+**/ 
+
+/**** 函数列表:
+(1) filter_event: 过滤不符合条件的事件
+(2) mark_event_win: 过滤事件窗口，并标注事件窗口的有效性
+(3) gen_overlapped_win: 生成事件窗口(允许重叠）
+(4) gen_no_overlapped_win：生成事件窗口(不允许重叠）
+(5) cal_access_ret: 计算事件窗口的收益率
+****/ 
+
+
+
+/** =======================================================================**/
+
+
+
+
 /* 模块1: 过滤事件。剔除以下事件：
 (1) 上市时间未超过N个自然日（默认为365天，即一年)
 (2) 非ST股票 
 (3) 非A股
 (4) 已退市
 (5) 停牌时间超过N个交易日(默认为20个交易日)  ---> 可以事先统计一下：停牌的事件占比，并且已经停牌了多少天。
-(6) 是否在股票池中（默认，允许不再股票池中)
 ***/
 
 /* INPUT:
-	(1) event_table: event_id/date/stock_code/其他
+	(1) event_table: event_id/event_date/stock_code/其他
 	(2) stock_info_table(仅限于所有的A股): stock_code/stock_name(可选)/list_date/delist_date/is_st
 	(3) market_table: stock_code/end_date/is_halt/halt_days(只有在is_halt=1的时候才计算)/is_in_pool
 	(4) ndays: 上市之后的N个自然日。要求ndays>=0 (即上市当天予以剔除。避免新股的影响)
 	(5) halt_days: 停牌时间超过N个交易日。要求halt_days>=0 
+	(6) is_filter_mark: 1-给出不符合要求的标志位filter(>0表示需要过滤)，0-直接予以剔除。
 
 /* OUTPUT:
 	(3) output_table: event_id/date/stock_code/其他
 
 **/
 
-%MACRO filter_event(event_table, stock_info_table, market_table, output_table, ndays = 365, halt_days = 20, is_in_pool = 0);
+%MACRO filter_event(event_table, stock_info_table, market_table, output_table, ndays = 365, halt_days = 20, is_filter_mark = 0);
 	PROC SQL;
 		CREATE TABLE tmp AS
-		SELECT A.*, B.list_date, B.delist_date, B.is_st, C.halt_days, C.is_halt, C.is_in_pool
+		SELECT A.*, B.list_date, B.delist_date, B.is_st, C.halt_days, C.is_halt
 		FROM &event_table A LEFT JOIN &stock_info_table B
 		ON A.stock_code = B.stock_code
 		LEFT JOIN &market_table. C
-		ON A.date = C.end_date AND A.stock_code = C.stock_code
+		ON A.event_date = C.end_date AND A.stock_code = C.stock_code
 		WHERE A.stock_code IN
 		(SELECT stock_code FROM &stock_info_table.)
 		ORDER BY A.event_id;
 	QUIT;
 
-	DATA &output_table.(drop =  list_date delist_date is_st);
+	DATA &output_table.(drop =  list_date delist_date is_st halt_days is_halt);
 		SET tmp;
-		IF missing(list_date) OR (NOT missing(list_date) AND date - list_date <= &ndays.) THEN delete;
-		IF is_st = 1 THEN delete;
-		IF not missing(delist_date) AND date >= delist_date THEN delete;
-		IF missing(is_halt) THEN delete;   /** 必须要有是否停牌的信息 */
-		IF is_halt = 1 AND halt_days >= &halt_days. THEN delete;
-		IF 
+		%IF %SYSEVALF(&is_filter_mark. =1) %THEN %DO;
+			filter = 0;
+			IF missing(list_date) OR (NOT missing(list_date) AND event_date - list_date <= &ndays.) THEN filter = 1;
+			IF is_st = 1 THEN filter = 2;
+			IF not missing(delist_date) AND event_date >= delist_date THEN filter = 3;
+			IF missing(is_halt) THEN filter = 4;   /** 必须要有是否停牌的信息 */
+			IF is_halt = 1 AND halt_days >= &halt_days. THEN filter = 5;
+		%END; 
+		%ELSE %DO;
+			IF missing(list_date) OR (NOT missing(list_date) AND event_date - list_date <= &ndays.) THEN delete;
+			IF is_st = 1 THEN delete;
+			IF not missing(delist_date) AND event_date >= delist_date THEN delete;
+			IF missing(is_halt) THEN delete;   /** 必须要有是否停牌的信息 */
+			IF is_halt = 1 AND halt_days >= &halt_days. THEN delete;
+		%END; 
 	RUN;
 
 	PROC SQL;
@@ -49,7 +82,7 @@
 
 /*** 模块2：过滤事件窗口，并标注事件窗口的有效性 ***/
 /* (0) 直接剔除：窗口日尚未上市，或者窗口日已经退市的记录
-(1) 停牌日标注为1。在计算当日收益时，可以考虑纳入。也可以考虑不纳入。停牌日不影响后续窗口的计算（统计占比)
+(1) 停牌日标注为1。在计算当日收益时，可以考虑纳入。也可以考虑不纳入（目前不纳入)。停牌日不影响后续窗口的计算（统计占比)
 (2) 复牌日，涨跌停超过10%限制的，标注为2。为避免极端值影响，当日收益不予以计算。但不影响后续窗口的计算(统计占比)
 (3) 复牌日，一字涨跌停的，标注为3。为剔除复牌日影响，当日收益不予以纳入。但不影响后续窗口的占比（统计占比）
 (4) 非复牌日，涨跌停超过10%限制的，标注为4。为避免极端值影响，当日收益不予以计算。但不影响后续窗口的计算(统计占比)
@@ -66,19 +99,20 @@
 	(1) output_table: event_id/event_date/stock_code/win_date/win/mark/其他
 ***/
 	
-%MACRO mark_event_win(my_library, event_win_table, stock_info_table, market_table,output_table);
-	
+
+
+%MACRO mark_event_win(event_win_table, stock_info_table, market_table,output_table);	
 	PROC SQL;
 		CREATE TABLE tmp AS
 		SELECT A.*,  C.list_date, C.delist_date, C.stock_code AS stock_code_c
-		FROM &event_win_table. LEFT JOIN &stock_info_table. C
+		FROM &event_win_table. A LEFT JOIN &stock_info_table. C
 		ON A.stock_code = C.stock_code
-		ORDER BY event_id, stock_code, date;
+		ORDER BY event_id, stock_code;
 	QUIT;
 	DATA tmp(drop = stock_code_c list_date delist_date);
 		SET tmp;
 		IF missing(stock_code_c) THEN delete;
-		IF win_date <= list_date OR win_date >= delist_date THEN delete;
+		IF win_date <= list_date OR (not missing(delist_date) AND win_date >= delist_date) THEN delete;
 	RUN;
 	
 	PROC SQL;
@@ -95,7 +129,7 @@
 		ELSE IF is_resumption = 1 AND is_limit IN (3,4) THEN mark = 2;
 		ELSE IF is_resumption = 1 AND is_limit IN (1,2) THEN mark = 3;
 		ELSE IF is_resumption = 0 AND is_limit IN (3,4) THEN mark = 4;
-		ELSE IF is_resumption = 0 AN is_limint IN (1,2) THEN mark = 5;
+		ELSE IF is_resumption = 0 AND is_limit IN (1,2) THEN mark = 5;
 		ELSE mark = 0;
 	RUN;
 		
@@ -117,18 +151,16 @@
 	(3) bm_hqinfo_table: end_date/stock_code/price/last_price (这里每个stock可以指定不同的基准。因此price就是指定基准的价格)
 	(4) start_win: 窗口起始
 	(5) end_win：窗口结束
+	(6) busday_table: date (这个避免使用外部表）
 
 /** 输出:
        (1) &eventName._hq: event_id/event_date/stock_code/win_date/win/price/last_price/bm_price/last_bm_price
-
-/** 外部表格：
-	(1) busday:date
 
 /** 外部函数:
 	(1) ~/日期_通用函数/map_date_to_index
 
 ***/
-%MACRO gen_overlapped_win(eventName, event_table, stock_hqinfo_table, bm_hqinfo_table, start_win, end_win);
+%MACRO gen_overlapped_win(eventName, event_table, stock_hqinfo_table, bm_hqinfo_table, start_win, end_win, busday_table = busday);
 	
 	PROC SQL;
 		CREATE TABLE tt_hqinfo_with_bm AS
@@ -141,8 +173,8 @@
 		ORDER BY A.end_date, A.stock_code;
 	QUIT;
 
-	%map_date_to_index(busday, &event_table., event_date, busday_copy)
-	%map_date_to_index(busday,tt_hqinfo_with_bm, end_date, tt_hqinfo_with_bm)
+	%map_date_to_index(&busday_table., &event_table., event_date, busday_copy)
+	%map_date_to_index(&busday_table.,tt_hqinfo_with_bm, end_date, tt_hqinfo_with_bm)
 
 	PROC SQL;
 		CREATE TABLE &eventName._hq AS
@@ -178,8 +210,6 @@
 /** 输出:
     (1) &eventName._hq: event_id/event_date/stock_code/win_date/win/price/last_price/bm_price/last_bm_price
 
-/** 外部表格：
-	(1) busday:date
 
 /** 外部函数:
 	(1) ~/日期_通用函数/map_date_to_index
@@ -292,50 +322,58 @@
 
 /* 模块3: 计算超额收益率 */
 
-/* Input: 
-	(1) eventName: the event name or its abbreviation (character)
-	(2) eventName_hq: datasets after merging event with hqinfo (the output generated after module: gen_no_overlapped_win / gen_overlapped_win)
-	(3) start_win: start window (negative for days ahead, postive for days after, 0 for event day) (numeric)
-	(4) end_win: end window (numeric)
-	(5) buy_win: buy day (at the end of the day, eg: 0 -> buy at the end of event day) 
-	(6) stock_info_table: datasets 
-	(7) market_table: mark whether halt
 
-/* Output: (1) &eventName._%eval(-&start_win)_&end_win */
-/* Datasets Detail:
-	(1) (input)  eventName_hq: event_id, date, price, ret, bm_price, bm_ret, win
-		(input) market_table: stock_code date is_halt is_limit is_in_pool
-	    (input) stock_info_table:stock_code, stock_name, is_delist, list_date, delist_date, is_st
-	(2) (output) &eventName._alpha: event_id, date, win, alpha, 
-			accum_alpha(accumulative alpha from the start_win)
-			accum_alpha_after(accumulative alpha from the buy_win), 
-			event_valid(valid if no return exceeds 10%), 
-			realized_alpha(realized alpha before the events),
-			is_d_alpha_pos (daily alpha is positive?),
-			is_a_alpha_pos (accumulative alpha is positive?)*/
+/* 输入
+	(0) eventName: 字符类型
+	(1) event_hq_table: 由gen_no_overlapped_win或者gen_overlapped_win生成的表格。
+		包括: event_id/event_date/win_date/win/stock_code/price/last_price/bm_price/bm_last_price/mark
+	(2) buy_win：买入窗口点(在收盘买入。如: buy_win = 0 表示在事件日收盘买入)
+	(3) start_win: 窗口起始
+	(4) end_win：窗口结束
+	(5) filter_invalid ： 1-在计算累计收益率的时候，将出现mark=2/3/4的事件收益，都统一不予计算。0-全部计算。这样的收益是包含异常点的 **/
+
+/** 输出:
+    (1) &eventName._%eval(-&start_win)_&end_win:  event_id/event_date/win_date/win/stock_code +
+		alpha 
+		accum_alpha(accumulative alpha from the start_win) 
+		event_valid(valid if no return exceeds 10%)
+		realized_alpha(realized alpha before the events)
+ 		is_d_alpha_pos (daily alpha is positive?)
+		is_a_alpha_pos (accumulative alpha is positive?)
+**/
 
 
-%MACRO cal_access_ret(my_library, eventName, eventName_hq, buy_win, stock_info_table, market_table);
+%MACRO cal_access_ret(eventName, event_hq_table, buy_win, start_win, end_win, filter_invalid);
 	/* 计算单日alpha */
 	PROC SQL;
-		CREATE TABLE &my_library..&eventName._alpha AS 
+		CREATE TABLE &eventName._alpha AS 
 			SELECT *,
-			ret - bm_ret AS alpha 
-			FROM &my_library..&eventName_hq
+			(price/last_price-1)*100 AS abs_ret,
+			(price/last_price - bm_price/bm_last_price)*100 AS alpha 
+			FROM &event_hq_table.
 			ORDER BY event_id, win;
 	QUIT;
 	
-	/* 标注事件窗口是否有效 */
-	%mark_event_win(my_library=&my_library, event_win_table=&eventName._alpha, 
-			stock_info_table=&stock_info_table, market_table=&market_table,output_table=&eventName._alpha);
-	PROC SORT DATA = &my_library..&eventName._alpha;
-		BY event_id win;
-	RUN;
-	
 	/* 计算起始日开始的累积alpha并标注事件是否有效 */
-	DATA &my_library..&eventName._alpha(drop = start_price start_bm_price);
+	DATA &eventName._alpha(drop = start_price start_bm_price);
 		SET &my_library..&eventName._alpha;
 		BY event_id;
+		RETAIN accum_alpha_after 0;
+		REATAIN accum_ret_after 0;
+		RETAIN valid 1;
+		
+		IF first.event_id THEN DO;
+			accum_alpha_after = 0;
+			accum_ret_after = 0;
+			valid = 1;
+		E
+		
+
+
+
+
+
+
 		RETAIN accum_alpha_after 0;
 		RETAIN valid 1;
 		RETAIN start_price .;

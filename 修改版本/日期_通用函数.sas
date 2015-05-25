@@ -1,6 +1,13 @@
 
+/*** 函数列表：
+(1) adjust_date_modify: 将非交易日调整为交易日(或者其他指定的非连续的日期)
+(2) get_date_windows: 提取日期的窗口[start_intval, end_intval]
+(3) get_month_date:  提取月末日期(交易日)
 
-/*** 模块1: 将非交易日调整为交易日 **/
+***/
+
+
+/*** 模块1: 将非交易日调整为交易日(或者其他指定的非连续的日期) **/
 /** 针对旧版本中的 adjust_date进行了修改 */
 /** 输入:
 (1) busday_table(交易日列表): date
@@ -59,6 +66,94 @@
 		DROP TABLE tmp, tmp2, teventday;
 	QUIT;
 %MEND adjust_date_modify;
+
+
+/*** 模块2: 提取日期的窗口[start_intval, end_intval]**/
+/** 要求：start_intval <= end_intval */
+/** 输入:
+(1) raw_table(交易日列表): 包含colname(与日期相关)
+(2) colname(character): 在待调整表格中的日期列名称
+(3) start_intval: 负数表示往前推
+(4) end_intval: 负数表示往前推
+**/
+
+/**　输出：
+(1) output_table: 原有的列 + &colname._i(b/f) (i为窗口距离。如果是往前的时间窗口，则结尾为b,否则为f)
+**/
+
+%MACRO get_date_windows(raw_table, colname, output_table, start_intval = 1, end_intval = 12);
+	PROC SQL;
+		CREATE TABLE tt_date AS
+		SELECT distinct &colname. AS date_bb
+		FROM &raw_table.
+		ORDER BY &colname.;
+	QUIT;
+
+	DATA tt_date;
+		SET tt_date;
+		id = _N_;
+	RUN;
+
+	%DO i = &start_intval. %TO &end_intval. %BY 1;
+		%IF %SYSEVALF(&i.<0) %THEN %LET iname = b%sysevalf(-&i.);
+		%ELSE %LET iname = f&i.; 
+		PROC SQL;
+			CREATE TABLE tmp AS
+			SELECT A.*, B.date_bb AS date_&iname LABEL "date_&iname."
+			FROM tt_date A LEFT JOIN tt_date B
+			ON B.id = A.id + (&i.)
+			ORDER BY A.date_bb;
+		QUIT;
+		DATA tt_date;
+			SET tmp;
+		RUN;
+	%END;
+	PROC SQL;
+		CREATE TABLE tmp AS
+		SELECT A.*, B.*
+		FROM &raw_table. A LEFT JOIN tt_date B
+		ON A.&colname. = B.date_bb
+		ORDER BY A.&colname.;
+	QUIT;
+
+	DATA &output_table.(drop = date_bb id);
+		SET tmp;
+	RUN;
+	PROC SQL;
+		DROP TABLE tt_date, tmp;
+	QUIT;
+%MEND get_date_windows;
+
+/*** 模块3: 提取月末日期(交易日) **/
+/** 输入:
+(1) busday_table(交易日列表): date
+(2) start_date: 开始日期
+(3) end_date: 结束日期
+**/
+/**　输出：
+(1) output_table: date
+**/
+
+%MACRO get_month_date(busday_table, start_date, end_date, rename, output_table);
+	PROC SQL;
+		CREATE TABLE &output_table. AS
+		SELECT date AS &rename. LABEL "end_date"
+		FROM &busday_table.
+		GROUP BY year(date), month(date)
+		HAVING date = max(date);
+	QUIT;
+	DATA &output_table.;
+		SET &output_table.;
+		IF "&start_date"d <= end_date <= "&end_date."d;
+	RUN;
+%MEND get_month_date;
+
+
+
+
+
+
+
 
 
 /* module 2: create a subsets and new global macro */
@@ -216,3 +311,5 @@
 	QUIT;
 
 %MEND;
+
+

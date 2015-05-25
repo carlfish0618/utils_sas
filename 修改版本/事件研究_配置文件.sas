@@ -1,6 +1,6 @@
 
 /*** 事件研究_配置文件 **/
-%LET env_start_date = 15dec2010;
+%LET env_start_date = 1jan2014;
 
 /** 1- A股行情 **/
 PROC SQL;
@@ -9,6 +9,17 @@ PROC SQL;
 	stock_code, close, high, low, open, vol, istrade, pre_close, factor
 	FROM hq.hqinfo
 	WHERE type = "A" AND "&env_start_date."d <= datepart(end_Date)
+	ORDER BY end_date, stock_code;
+QUIT;
+
+/** 1-2 指数行情 **/
+PROC SQL;
+	CREATE TABLE index_hqinfo AS
+	SELECT datepart(end_Date) AS end_date FORMAT yymmdd10.,
+	stock_code, close, pre_close
+	FROM hq.hqinfo
+	WHERE type = "S" AND "&env_start_date."d <= datepart(end_Date)
+	AND stock_code IN ("000905","000300", "399102", "399101")
 	ORDER BY end_date, stock_code;
 QUIT;
 
