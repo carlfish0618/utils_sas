@@ -119,3 +119,8 @@
 		(7) attribute_to_event：赋予事件属性
 		(8) alpha_collect_by_group: 根据提供的分组变量，汇总每个窗口的alpha/ret等的分析结果
 	****/ 
+
+/********************* 2015-5-28***************/
+1. 事件研究_通用函数
+新增：
+(1) alpha_detail_output: 输出某个特定窗口下，所有事件accum_alpha/accum_ret的情况

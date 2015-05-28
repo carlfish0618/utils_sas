@@ -1,6 +1,7 @@
 
 /*** 事件研究_配置文件 **/
-%LET env_start_date = 1jan2014;
+/** 外部变量: env_start_date **/
+/*%LET env_start_date = 1jan2014;*/
 
 /** 1- A股行情 **/
 PROC SQL;

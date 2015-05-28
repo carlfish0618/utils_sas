@@ -10,6 +10,7 @@
 (6) 补充信息，事件日前[N,0]的alpha和return，用于分组使用
 (7) 赋予事件属性
 (8) 根据提供的分组变量，汇总每个窗口的alpha/ret等的分析结果
+(9) 输出某个特定窗口下，所有事件accum_alpha/accum_ret的情况
 
 
 **/ 
@@ -24,6 +25,7 @@
 (6) append_ahead_effect: 补充信息，事件日前[N,0]的alpha和return，用于分组使用
 (7) attribute_to_event：赋予事件属性
 (8) alpha_collect_by_group: 根据提供的分组变量，汇总每个窗口的alpha/ret等的分析结果
+(9) alpha_detail_output: 输出某个特定窗口下，所有事件accum_alpha/accum_ret的情况
 ****/ 
 
 
@@ -536,11 +538,11 @@
 			accum_ret_before = .;
 		END;
 		/** 考虑是否需要调整单日收益 */
-		IF filter_limit_before = 1 AND win <= &buy_win. AND mark IN (1,3) THEN DO;
+		IF filter_limit_before = 1 AND win <= &buy_win. AND mark IN (1) THEN DO;
 			abs_ret_mdf = .;
 			alpha_mdf = .;
 		END;
-		ELSE IF filter_limit_after = 1 AND win > &buy_win. AND mark IN (1,3) THEN DO;
+		ELSE IF filter_limit_after = 1 AND win > &buy_win. AND mark IN (1) THEN DO;
 			abs_ret_mdf = .;
 			alpha_mdf = .;
 		END;
@@ -750,7 +752,7 @@
 				ID &group_var.;
 				VAR mean_&alpha_var.;
 			RUN;
-			%output_to_excel(excel_path=&output_dir./result.xls, input_table=&eventName._&alpha_var._g2, sheet_name = group_&sheet_name._mean);
+			%output_to_excel(excel_path=&file_name., input_table=&eventName._&alpha_var._g2, sheet_name = group_&sheet_name._mean);
 			PROC SQL;
 				DROP TABLE &eventName._&alpha_var._g2;
 			QUIT;
@@ -766,3 +768,52 @@
 		QUIT;
 	%END;
 %MEND alpha_collect_by_group;
+
+
+
+/** 模块9： 输出某个特定窗口下，所有事件accum_alpha/accum_ret的情况 */
+/* 输入:
+	(0) eventName: 事件名
+	(1) event_table: 最初的股票信息表
+	(1) alpha_table: cal_win_ret或append_ahead_effect或attribute_to_event的输出结果
+	(2) output_win: 特定的某个win下的结果
+	(2) is_output： 是否输出到外部文件夹：1- 输出（这时候filename和sheetname才有效)，0-不输出
+	(3) file_name: 字符串
+	(4) sheet_name: 字符串
+	(5) group_var: 感兴趣的分组信息，以空格隔开
+**/
+
+/* output: 
+	(1) filename(all_&sheetname.和group_&sheetname.)：包含detail结果。
+	(2) &eventName._alpha_detail: 包含分组分析的结果。
+***/
+
+
+%MACRO alpha_detail_output(eventName, event_table, alpha_table, output_win, is_output = 0, file_name=., sheet_name=detail, group_var=);
+	DATA &eventName._alpha_detail(keep = event_id win accum_alpha accum_ret &group_var.);
+		SET &alpha_table.;
+		IF win = &output_win.;
+	RUN;
+	PROC SQL;
+		CREATE TABLE tmp AS
+		SELECT A.*, B.*
+		FROM &event_table. A LEFT JOIN &eventName._alpha_detail B
+		ON A.event_id = B.event_id
+		ORDER BY accum_alpha desc, accum_ret desc;
+	QUIT;
+	DATA &eventName._alpha_detail;
+		SET tmp;
+	RUN;
+
+	/* 输出到文件 */
+	%IF %sysevalf(&is_output. = 1) %THEN %DO;
+		%output_to_excel(excel_path = &file_name., input_table = &eventName._alpha_detail, sheet_name = &sheet_name.);
+		PROC SQL;
+			DROP TABLE &eventName._alpha_detail;
+		QUIT;
+	%END;
+	PROC SQL;
+		DROP TABLE tmp ;
+	QUIT;
+%MEND alpha_detail_output;
+	
