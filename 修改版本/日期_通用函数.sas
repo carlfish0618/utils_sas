@@ -2,7 +2,12 @@
 /*** 函数列表：
 (1) adjust_date_modify: 将非交易日调整为交易日(或者其他指定的非连续的日期)
 (2) get_date_windows: 提取日期的窗口[start_intval, end_intval]
-(3) get_month_date:  提取月末日期(交易日)
+(3) get_month_date:  提取月末或月初日期(交易日)
+(4) get_weekday_date: 提取每周某一特定日期(如周一/周二等)，或第N个交易日
+(5) get_daily_date: 提取每天日期
+(6) gen_test_busdate: 生成回测日期
+(7) gen_adjust_busdate：生成调仓日期（可以区分日频/月频/周频(允许周中某一天)
+(8) adjust_date_to_mapdate: 根据mapdate_table将rawdate_table对应到最近的一个日期(可以往前或者往后，包含或者不包含map_busdate当日)
 
 ***/
 
@@ -124,32 +129,272 @@
 	QUIT;
 %MEND get_date_windows;
 
-/*** 模块3: 提取月末日期(交易日) **/
+/*** 模块3: 提取月末或月初日期(交易日) **/
 /** 输入:
 (1) busday_table(交易日列表): date
 (2) start_date: 开始日期
 (3) end_date: 结束日期
+(4) rename: 是否进行重命名
+(5) type: 1-月末（默认) 2-月初
 **/
 /**　输出：
-(1) output_table: date
+(1) output_table: &rename.
 **/
+/** 注意：月末会自动将busday_table中的最后一天加入。月初会自动将busday_table中的第一天加入 */
 
-%MACRO get_month_date(busday_table, start_date, end_date, rename, output_table);
-	PROC SQL;
-		CREATE TABLE &output_table. AS
-		SELECT date AS &rename. LABEL "end_date"
-		FROM &busday_table.
-		GROUP BY year(date), month(date)
-		HAVING date = max(date);
-	QUIT;
+%MACRO get_month_date(busday_table, start_date, end_date, rename, output_table, type=1);
+	%IF %SYSEVALF(&type.=1) %THEN %DO;
+		PROC SQL;
+			CREATE TABLE &output_table. AS
+			SELECT date AS &rename. LABEL "end_date"
+			FROM &busday_table.
+			GROUP BY year(date), month(date)
+			HAVING date = max(date);
+		QUIT;
+	%END;
+	%ELSE %DO;
+		PROC SQL;
+			CREATE TABLE &output_table. AS
+			SELECT date AS &rename. LABEL "end_date"
+			FROM &busday_table.
+			GROUP BY year(date), month(date)
+			HAVING date = min(date);
+		QUIT;
+	%END;
 	DATA &output_table.;
 		SET &output_table.;
-		IF "&start_date"d <= end_date <= "&end_date."d;
+		IF "&start_date"d <= &rename. <= "&end_date."d;
 	RUN;
 %MEND get_month_date;
 
 
+/*** 模块4: 提取每周某一特定日期(如周一/周二等)，或第N个交易日(若N>周交易日个数的最大值，则取最后一个交易日。N>0)**/
+/** 特别的：另N=7则必然选择最后一个交易日 */
+/** 细节：week和weekday函数都认为每一周的开始都是周日 */
 
+/** 输入:
+(1) busday_table(交易日列表): date
+(2) start_date: 开始日期
+(3) end_date: 结束日期
+(4) rename: 是否进行重命名
+(5) type: 1- 特定日期 2- 第N个交易日
+(6) trade_day: 当type=1时，trade_day=1表示周日，2表示周一，以此类推（取值范围：0-6)。当type=2时，trade_day=1表示每周第一个交易日(取值范围：>0)。
+**/
+/**　输出：
+(1) output_table: &rename.
+**/
+
+	
+%MACRO get_weekday_date(busday_table, start_date, end_date, rename, type, trade_day, output_table);
+	DATA tt_busdate;
+		SET &busday_table.(keep = date);
+		week = week(date); /* 在每一年中的第几周。从0开始 */
+		wd = weekday(date);
+		year = year(date);
+	RUN;
+	%IF %SYSEVALF(&type.=1) %THEN %DO;
+		DATA &output_table.(keep = date rename = (date = &rename.));
+			SET tt_busdate;
+			IF wd = &trade_day.;
+			IF "&start_date."d <= date <= "&end_date."d;
+		RUN;
+	%END;
+	%ELSE %DO;
+		PROC SORT DATA = tt_busdate;
+			BY year week date;
+		RUN;
+		DATA tt_busdate;
+			SET tt_busdate;
+			BY year week;
+			RETAIN rank 0;
+			IF first.week THEN rank = 0;
+			rank + 1;
+		RUN;
+
+		PROC SQL;
+			CREATE TABLE &output_table. AS
+			SELECT date AS &rename. 
+			FROM tt_busdate
+			WHERE rank <= &trade_day.
+			GROUP BY year(date), week
+			HAVING date = max(date);
+		QUIT; 
+		DATA &output_table.;
+			SET &output_table.;
+			IF "&start_date"d <= &rename. <= "&end_date."d;
+		RUN;
+	%END;
+	PROC SQL;
+		DROP TABLE tt_busdate;
+	RUN;
+%MEND get_weekday_date;
+
+/** 模块5：生成每日日期 **/
+/** 输入:
+(1) busday_table(交易日列表): date
+(2) start_date: 开始日期
+(3) end_date: 结束日期
+(4) rename: 是否进行重命名(默认为date，与以前习惯一致)
+**/
+/**　输出：
+(1) output_table: &rename.
+**/
+
+%MACRO get_daily_date(busday_table, start_date, end_date, rename, output_table);
+	DATA &output_table.(keep = &rename.);
+		SET &busday_table.(keep = date);
+		IF "&start_date."d <= date <= "&end_date."d;
+		&rename. = date;
+		FORMAT &rename. yymmdd10.;
+	RUN;
+%MEND get_daily_date;
+
+ 
+		
+
+/** 模块6：生成回测日期(日频率) */
+/** 输入:
+(1) busday_table(交易日列表): date
+(2) start_date: 开始日期
+(3) end_date: 结束日期
+(4) rename: 是否进行重命名(默认为date，与以前习惯一致)
+**/
+/**　输出：
+(1) output_table: &rename.
+**/
+
+%MACRO gen_test_busdate(busday_table, start_date, end_date, rename=date, output_table=test_busdate);
+	%get_daily_date(busday_table=&busday_table., start_date=&start_date., end_date=&end_date., rename=&rename., output_table=&output_table.);
+%MEND gen_test_busdate;
+
+/** 模块7：生成调仓日期(支持各种频率) **/
+/** 输入:
+(1) busday_table(交易日列表): date
+(2) start_date: 开始日期
+(3) end_date: 结束日期
+(4) rename: 是否进行重命名(默认为date，与以前习惯一致)
+(5) freq: 调仓频率 1-每日 2-每月 3-每周
+(6) type: 只有当feq=2/3时才生效。当freq=2时,1-月末 2-月初。当freq=3时，1-特定日期 2-第N个交易日（这两个参数与get_month_date和get_weekday_date中参数一致)
+(7) trade_day: 只有当freq=3时才生效。参数定义与get_weekday_date中参数一致
+**/
+/**　输出：
+(1) output_table: &rename.
+**/
+
+%MACRO gen_adjust_busdate(busday_table, start_date, end_date, rename=end_date, freq=2, type=1, trade_day=., output_table=adjust_busdate);
+	%IF %SYSEVALF(&freq.=1) %THEN %DO;
+		%get_daily_date(busday_table=&busday_table., start_date=&start_date., end_date=&end_date., rename=&rename., output_table=&output_table.);
+	%END;
+	%ELSE %IF %SYSEVALF(&freq.=2) %THEN %DO;
+		%get_month_date(busday_table=&busday_table., start_date=&start_date., end_date=&end_date., 
+				rename=&rename., output_table=&output_table., type=&type.);
+	%END;
+	%ELSE %IF %SYSEVALF(&freq.=3) %THEN %DO;
+		%get_weekday_date(busday_table=&busday_table., start_date=&start_date., end_date=&end_date., rename=&rename.,
+							type=&type., trade_day=&trade_day., output_table=&output_table.);
+	%END;
+%MEND gen_adjust_busdate;
+
+
+/** 模块8：根据mapdate_table将rawdate_table对应到最近的一个日期(可以往前或者往后，包含或者不包含map_busdate当日) **/
+/** 输入:
+(1) rawdate_table: 包含日期列及其他列
+(2) mapdate_table: 包含日期列和其他列
+(3) raw_colname: rawdate_table中日期列的名称
+(4) map_colname: mapdate_table中日期列的名称
+(5) is_backward: 1-rawdate_table中出现了mapdate_table中没有的日期，map向前最近的日期。(更为常见)
+				 0-map向后最近的日期
+(6) is_included: 
+			(a) 当is_backward=1时，0-如果rawdate_table中出现了mapdate_table中同样出现的日期，则往前取最近日期。1- 就取当前的日期。
+			(b) 当is_backward=0时，0-如果rawdate_table中出现了mapdate_table中同样出现的日期，则往后取最近日期。1- 就取当前的日期。
+注：is_included=0主要情况是：mapdate_table中的信息如果生效日为下一天，则mapdate当天用到的其实是前一天的信息。
+**/
+/**　输出：
+(1) output_table: rawdate_table中的原始列+map_&raw_colname.
+**/
+
+/** 注：对于无法寻找到合适匹配的，则设定为缺失 */
+/** 注2-1：当is_backward=0时，mapdate_table的起始时间要求超过rawdate_table中的起始时间。否则，之前无法匹配的设定为缺失。*/
+/** 注2-2：当is_backward=1时，mapdate_table的结束时间要求超过rawdate_table中的结束时间。否则，之后无法匹配的都统一设定为mapdate_table的结束时间。*/
+
+
+%MACRO adjust_date_to_mapdate(rawdate_table, mapdate_table, raw_colname, map_colname, output_table,is_backward=1, is_included=0);
+	PROC SQL;
+		CREATE TABLE tt_mapdate AS
+		SELECT A.&map_colname., 
+			min(B.&map_colname.) AS next_&map_colname. FORMAT yymmdd10. 
+		FROM &mapdate_table. A LEFT JOIN &mapdate_table. B
+		ON A.&map_colname. < B.&map_colname.
+		GROUP BY A.&map_colname.
+		ORDER BY A.&map_colname.;
+	QUIT;
+
+	%IF %SYSEVALF(&is_backward.=1) %THEN %DO;
+		%IF %SYSEVALF(&is_included. = 0) %THEN %DO;
+			PROC SQL;
+				CREATE TABLE tt_output AS
+				SELECT A.*, B.&map_colname. AS map_&raw_colname.
+				FROM &rawdate_table. A LEFT JOIN tt_mapdate B
+				ON B.&map_colname. < A.&raw_colname. <= B.next_&map_colname.
+				ORDER BY A.&raw_colname.;
+			QUIT;
+			PROC SQL;
+				UPDATE tt_output
+				SET map_&raw_colname. = (SELECT max(&map_colname.) FROM tt_mapdate)
+				WHERE &raw_colname. > (SELECT max(&map_colname.) FROM tt_mapdate);
+			QUIT;
+		%END;
+		%ELSE %DO;
+			PROC SQL;
+				CREATE TABLE tt_output AS
+				SELECT A.*, B.&map_colname. AS map_&raw_colname.
+				FROM &rawdate_table. A LEFT JOIN tt_mapdate B
+				ON B.&map_colname. <= A.&raw_colname. < B.next_&map_colname.
+				ORDER BY A.&raw_colname.;
+			QUIT;
+			PROC SQL;
+				UPDATE tt_output
+				SET map_&raw_colname. = (SELECT max(&map_colname.) FROM tt_mapdate)
+				WHERE &raw_colname. >= (SELECT max(&map_colname.) FROM tt_mapdate);
+			QUIT;
+		%END;
+	%END;
+	%ELSE %DO;
+		%IF %SYSEVALF(&is_included. = 0) %THEN %DO;
+			PROC SQL;
+				CREATE TABLE tt_output AS
+				SELECT A.*, B.next_&map_colname. AS map_&raw_colname.
+				FROM &rawdate_table. A LEFT JOIN tt_mapdate B
+				ON B.&map_colname. <= A.&raw_colname. < B.next_&map_colname.
+				ORDER BY A.&raw_colname.;
+			QUIT;
+		%END;
+		%ELSE %DO;
+			PROC SQL;
+				CREATE TABLE tt_output AS
+				SELECT A.*, B.next_&map_colname. AS map_&raw_colname.
+				FROM &rawdate_table. A LEFT JOIN tt_mapdate B
+				ON B.&map_colname. < A.&raw_colname. <= B.next_&map_colname.
+				ORDER BY A.&raw_colname.;
+			QUIT;
+			/** 当mapdate_table中的最小值大于rawdate_table中的最小值的时候，需要将mapdate_table中的最小值补上 */
+			PROC SQL;
+				UPDATE tt_output
+				SET map_&raw_colname. = &raw_colname. WHERE &raw_colname. =
+				(SELECT min(&map_colname.) FROM tt_mapdate);
+			QUIT;
+		%END;
+	%END;
+	DATA &output_table.;
+		SET tt_output;
+	RUN;
+	PROC SQL;
+		DROP TABLE tt_output, tt_mapdate;
+	QUIT;
+%MEND adjust_date_to_mapdate;
+
+
+			
 
 
 

@@ -124,3 +124,34 @@
 1. 事件研究_通用函数
 新增：
 (1) alpha_detail_output: 输出某个特定窗口下，所有事件accum_alpha/accum_ret的情况
+
+
+/********************* 2015-5-29***************/
+1. 修改-日期_通用函数：
+(1) 修改函数:
+	(a) get_month_busdate: 新增type字段，1表示月末最后一个交易日，2表示月初第一个交易日
+(2) 新增函数：
+	(a) get_weekday_date：提取每周某一天(如周一/周二等)或最后一个交易日
+	(b) get_daily_date: 提取每天日期
+	(c) gen_test_busdate: 生成回测日期
+	(d) gen_adjust_busdate：生成调仓日期（可以区分日频/月频/周频(允许周中某一天)
+	(e) adjust_date_to_mapdate: 根据mapdate_table将rawdate_table对应到最近的一个日期(可以往前或者往后，包含或者不包含map_busdate当日)
+
+2. 修改-事件研究_配置文件:
+   (1) 外部变量: env_start_date改为外面设置。
+
+3. 新建：组合构建_配置文件
+   包括组合构建通用函数所需的外部数据表:
+   (a) busday
+   (b) hqinfo
+
+4. 修改-其他通用函数：
+   (1) output_to_excel: 缺省的sheet_name由Sheet$1更改为data，因为前者带有特殊符号
+
+5. 新建: 行业指数构建_专用模块：
+   (1) 构建fullgoal行业指数，采用流通市值加权的方式，每日调整
+   (2) 最终结果存于: indus_index中
+
+
+
+

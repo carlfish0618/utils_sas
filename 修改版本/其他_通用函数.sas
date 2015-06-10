@@ -70,7 +70,7 @@ options validvarname=any; /* 支持中文变量名 */
 
 /** 输出:
 (1) output_stock_table: end_date/stock_code/value  **/
-%MACRO get_stock_size(stock_table, info_table, share_table,output_table,  index = 1);
+%MACRO get_stock_size(stock_table, info_table, share_table,output_table, index = 1);
 	%IF %SYSEVALF(&index. = 1) %THEN %DO;
 		%LET var_name = freeshare;
 	%END;
@@ -117,10 +117,12 @@ options validvarname=any; /* 支持中文变量名 */
 
 /** 模块4：输出到excel文件中 */
 /** 不允许replace */
-%MACRO output_to_excel(excel_path, input_table, sheet_name = Sheet1$);
+%MACRO output_to_excel(excel_path, input_table, sheet_name = data);
 	LIBNAME myxls "&excel_path.";  /* external file */
 		DATA myxls.&sheet_name.;
 			SET &input_table.;
 		RUN;
 	LIBNAME myxls CLEAR;
 %MEND output_to_excel;
+
+
