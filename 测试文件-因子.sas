@@ -1,17 +1,17 @@
+%LET pfolio_env_start_date = 15dec2010;
 %LET adjust_start_date = 15jan2011;
-%LET adjust_end_date = 31mar2015;
+%LET adjust_end_date = 30jun2015;
 
-%get_month_date(busday_table=busday, start_date=&adjust_start_date., end_date=&adjust_end_date., rename=end_date, output_table=adjust_busdate);
+%get_month_date(busday_table=busday, start_date=&adjust_start_date., end_date=&adjust_end_date., rename=end_date, output_table=adjust_busdate, type=1);
 %get_date_windows(raw_table=adjust_busdate, colname=end_date, output_table = adjust_busdate2, start_intval =-2, end_intval = 2);
 
 PROC SQL;
 	CREATE TABLE raw_table AS
 	SELECT end_date, stock_code, close
 	FROM hqinfo
-	WHERE end_date IN 
-	(SELECT end_date FROM adjust_busdate2)
+	where end_date in 
+	(SELECT end_date FROM adjust_busdate)
 	AND index(stock_code,"600") = 1
-	AND year(end_date) = 2014 and 9<= month(end_date) <= 12
 	ORDER BY end_date, stock_code;
 QUIT;
 
@@ -19,7 +19,7 @@ QUIT;
 DATA factor_table;
 	SET raw_table(keep = end_date stock_code);
 	test_f = _N_;
-	test_f2 = _N_-100;
+	test_f2 = _N_**2;
 RUN;
-%single_factor_ic(factor_table=factor_table, return_table=ot2, group_name=stock_code, fname=test_f);
+/*%single_factor_ic(factor_table=factor_table, return_table=ot2, group_name=stock_code, fname=test_f);*/
 %loop_factor_ic(factor_table=factor_table, return_table=ot2, group_name=stock_code);

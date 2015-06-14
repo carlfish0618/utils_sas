@@ -49,7 +49,7 @@
 	(3) market_table: stock_code/end_date/is_halt/halt_days(只有在is_halt=1的时候才计算)/is_in_pool
 	(4) ndays: 上市之后的N个自然日。要求ndays>=0 (即上市当天予以剔除。避免新股的影响)
 	(5) halt_days: 停牌时间超过N个交易日。要求halt_days>=0 
-	(6) is_filter_mark: 1-给出不符合要求的标志位filter(>0表示需要过滤)，0-直接予以剔除。
+	(6) is_filter_mark: 1-给出不符合要求的标志位filter(>0表示需要过滤，并保留halt_days等辅助信息字段)，0-直接予以剔除(辅助字段剔除)。
 
 /* OUTPUT:
 	(3) output_table: event_id/date/stock_code/其他
@@ -69,7 +69,7 @@
 		ORDER BY A.event_id;
 	QUIT;
 
-	DATA &output_table.(drop =  list_date delist_date is_st halt_days is_halt);
+	DATA &output_table.;
 		SET tmp;
 		%IF %SYSEVALF(&is_filter_mark. =1) %THEN %DO;
 			filter = 0;
@@ -85,6 +85,7 @@
 			IF not missing(delist_date) AND event_date >= delist_date THEN delete;
 			IF missing(is_halt) THEN delete;   /** 必须要有是否停牌的信息 */
 			IF is_halt = 1 AND halt_days >= &halt_days. THEN delete;
+			drop list_date delist_date is_st halt_days is_halt;
 		%END; 
 	RUN;
 

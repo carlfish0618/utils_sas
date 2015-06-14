@@ -8,7 +8,7 @@
 /*** 模块1: 计算单区间或累计区间收益**/
 /** 要求：start_intval <= end_intval */
 /** 输入:
-(1) raw_table(交易日列表): 包含end_date, group_name, price_name及其他
+(1) raw_table(交易日列表): 包含end_date, &group_name, &price_name及其他
 (2) group_name(character): 可以是stock_code/indus_code等，任何标识主体的列名
 (3) price_name: 收盘点位
 (4) is_single: 单区间或累计区间(1-单区间 / 0-累计区间)
@@ -44,7 +44,8 @@
 		SELECT name, count(1) 
 		INTO :name_list SEPARATED BY ' ',
 			 :nvars
-		FROM var_list;
+		FROM var_list
+		ORDER BY name;
 	QUIT;
 	
 	/* 循环计算累计收益率 */
@@ -173,10 +174,10 @@
 **/
 
 /**　输出：
-(1) output_table: end_date/n_obs_f1/p_ic_f1/s_ic_f1
+(1) &fname._stat: end_date/n_obs_f1/p_ic_f1/s_ic_f1 (日期列表以factor_table中的end_date为准)
 **/
 
-%MACRO single_factor_ic(factor_table, return_table, group_name, fname);
+%MACRO single_factor_ic(factor_table, return_table, group_name, fname, output_table);
 	DATA &fname._t;
 		SET &factor_table.(keep = end_date &group_name. &fname.);
 		IF not missing(&fname.);
@@ -188,7 +189,7 @@
 		ORDER BY end_date;
 	QUIT;
 
-	/* 循环针对未来1-12个月的累计或单月收益率 */
+	/* 循环针对未来N个月的累计或单月收益率 */
 	PROC CONTENTS DATA = &return_table. OUT = var_list(keep = name) NOPRINT;
 	RUN;
 	DATA var_list;
@@ -258,9 +259,10 @@
 			SET tmp;
 		RUN;
 	%END;
-/*	PROC SQL;*/
-/*			DROP TABLE tmp, corr_p, corr_s, &fname._t, var_list;*/
-/*	QUIT;*/
+
+	PROC SQL;
+		DROP TABLE tmp, corr_p, corr_s, &fname._t, var_list;
+	QUIT;
 %MEND single_factor_ic;
 
 
@@ -274,8 +276,8 @@
 (4) fname: 收盘点位
 **/
 
-/**　输出：
-(1) output_table: end_date/n_obs_f1/p_ic_f1/s_ic_f1
+/**　输出(每个因子)：
+(1) &fname._stat: end_date/n_obs_f1/p_ic_f1/s_ic_f1
 **/
 
 
