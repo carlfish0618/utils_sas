@@ -152,9 +152,37 @@
    (1) 构建fullgoal行业指数，采用流通市值加权的方式，每日调整
    (2) 最终结果存于: indus_index中
 
-/********************* 2015-6-14***************/
+/********************* 2015-7-1***************/
 1.调试因子有效性模块
+(1) 修改: cal_intval_return当is_single=1的时候。
+	需要按照变量命名来求，而不能按照相对顺序。如: date_f11会排在date_f2之前。
+(2) 修改：single_factor_ic
+	(a) 将初始的&fname._t 修改为 &fname._t_raw。因为之后用到了&fname_t会覆盖掉之前的表。
+	(b) 为方便输出查看，允许选择只输出某一变量(N/s_ic/p_ic)。
+
+(3) 修改: loop_factor_ic
+	(a) 为方便输出查看，允许选择只输出某一变量(N/s_ic/p_ic)。
+(4) 新增:
+	(a) single_factor_score: 根据因子得分，排序并打分
+	(b) single_score_ret： 根据分组统计收益
+
+    
+
+2. 修改：其他_通用函数
+(1) 新增 plot_normal: 正态作图
+(2) 新增 cal_coef: 计算相关系数(包括pearson和spearman)
+(3) 修改 get_sector_info: 
+	不要求mapping_table中一定每天都有数据。提取行业信息时候选取mapping中最近的(不含)结果
+(4) 修改: get_stock_size
+	新增流通股本(liqa_size，允许第四种类型的输出)。另外，新增colname，允许各种市值的结果重命名。
 
 
+
+3. 新增：计量_通用函数
+	/**** 函数列表:
+		(1) cal_coef: 计算pearson和spearman相关系数
+		(2) granger_test: 格兰杰检验 （待修改）
+		(3) test_stationarity: 稳定性检验
+	****/ 
 
 

@@ -6,6 +6,8 @@
 (2) get_stock_size: 提取市值、流通市值信息等
 (3) read_from_excel: 从Excel中读取文件
 (4) output_to_excel: 输出文件到Excel中
+(5) plot_normal: 画正态图
+(6) cal_coef: 计算相关系数(包括pearson和spearman)
 ****/ 
 
 /** =======================================================================**/
@@ -26,7 +28,9 @@ options validvarname=any; /* 支持中文变量名 */
 		CREATE TABLE tmp AS
 		SELECT A.*, B.indus_code, B.indus_name
 		FROM &stock_table. A LEFT JOIN &mapping_table. B
-		ON A.stock_code = B.stock_code AND A.end_date = B.end_date   
+		ON A.stock_code = B.stock_code AND A.end_date > B.end_date  AND A.end_date <= B.end_date + 100 /* 最多取100天就够了 */
+		GROUP BY A.end_date, A.stock_code
+		HAVING B.end_date = max(B.end_date) 
 		ORDER BY A.end_date, A.stock_code;
 	QUIT;
 	/** 如果行业信息缺失，有可能是新股，尚未更新行业信息。这时候用已发布的，第一条记录的行业补充 */
@@ -64,13 +68,14 @@ options validvarname=any; /* 支持中文变量名 */
 /** 模块2: 提取个股信息 */
 /** 输入:
 (1) stock_table: stock_code/end_date/其他
-(2) index(numeric): 可以取 1-freeshare 2-a_share 3-total_share中一者。
+(2) index(numeric): 可以取 1-freeshare 2-a_share 3-total_share 4-liqa_share中一者。
 (3) info_table: stock_code/end_date/close
-(4) share_table: stock_code/end_date/freeshare(a_share,total_share等) 
+(4) share_table: stock_code/end_date/freeshare(a_share,total_share,liqa_share等) 
+(5) colname: 输出的市值列进行重命名
 
 /** 输出:
 (1) output_stock_table: end_date/stock_code/value  **/
-%MACRO get_stock_size(stock_table, info_table, share_table,output_table, index = 1);
+%MACRO get_stock_size(stock_table, info_table, share_table,output_table, colname, index = 1);
 	%IF %SYSEVALF(&index. = 1) %THEN %DO;
 		%LET var_name = freeshare;
 	%END;
@@ -79,6 +84,9 @@ options validvarname=any; /* 支持中文变量名 */
 	%END;
 	%ELSE %IF %SYSEVALF(&index. = 3) %THEN %DO;
 		%LET var_name = total_share;
+	%END;
+	%ELSE %IF %SYSEVALF(&index. = 4) %THEN %DO;
+		%LET var_name = liqa_share;
 	%END;
 	
 
@@ -93,7 +101,7 @@ options validvarname=any; /* 支持中文变量名 */
 	QUIT;
 	DATA &output_table.(drop = close &var_name.);
 		SET tmp;
-		value = close * &var_name.;
+		&colname. = close * &var_name.;
 	RUN;
 	PROC SQL;
 		DROP TABLE tmp;
@@ -124,5 +132,14 @@ options validvarname=any; /* 支持中文变量名 */
 		RUN;
 	LIBNAME myxls CLEAR;
 %MEND output_to_excel;
+
+/** 模块5: 画正态图 */
+%MACRO plot_normal(var,data);
+	proc univariate data=&data. normal; 
+    	var &var.;
+    	histogram &var.; 
+    	probplot &var.;
+	run;
+%MEND plot_normal;
 
 
