@@ -2,7 +2,8 @@
 
 /** ！！外部变量: env_start_date **/
 
-/*%LET env_start_date = 1jan2014;*/
+/*%LET env_start_date = 15dec2011;*/
+
 
 /** 1- A股行情 **/
 PROC SQL;
@@ -21,7 +22,7 @@ PROC SQL;
 	stock_code, close, pre_close
 	FROM hq.hqinfo
 	WHERE type = "S" AND "&env_start_date."d <= datepart(end_Date)
-	AND stock_code IN ("000905","000300", "399102", "399101","000001")
+	AND stock_code IN ("000905","000300", "399102", "399101","000001","000906")
 	ORDER BY end_date, stock_code;
 QUIT;
 

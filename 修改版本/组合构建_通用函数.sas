@@ -201,8 +201,6 @@
 /** 新增辅助字段: pre_date/pre_price/price/pre_close/close/adjust_price */
 /** 新增程序检验字段: mark(mark =1 表示没有出现异常点，否则需警惕用前收价格计算的收益和权重是否正确) */
 
-%LET daily_stock_pool = test_stock_pool;
-%LET adjust_date_table = adj_busdate;
 
 %MACRO cal_stock_wt_ret(daily_stock_pool, adjust_date_table, output_stock_pool);
 	/* Step1: 计算单日收益率，从调整日至今的累计收益率等 */
@@ -507,7 +505,7 @@
 
 		
 
-/** 模块4: 计算组合的收益和alpha等 */
+/** 模块4: 计算组合的收益 */
 /** 输入: 
 (1) daily_stock_pool: date / stock_code/open_wt(open_wt_c)/daily_ret(daily_ret_c) / (其他)
 (2) type(logical): 1- 以“基于前收盘价”计算的权重为基准计算; 0- 以“基于复权因子”计算的权重为基准计算

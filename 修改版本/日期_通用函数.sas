@@ -336,7 +336,7 @@
 				SELECT A.*, B.&map_colname. AS map_&raw_colname.
 				FROM &rawdate_table. A LEFT JOIN tt_mapdate B
 				ON B.&map_colname. < A.&raw_colname. <= B.next_&map_colname.
-				ORDER BY A.&raw_colname.;
+				ORDER BY A.&raw_colname.;W
 			QUIT;
 			PROC SQL;
 				UPDATE tt_output

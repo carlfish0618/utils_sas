@@ -7,7 +7,9 @@
 (3) read_from_excel: 从Excel中读取文件
 (4) output_to_excel: 输出文件到Excel中
 (5) plot_normal: 画正态图
-(6) cal_coef: 计算相关系数(包括pearson和spearman)
+(6) cal_dist:计算分布情况
+(7) mark_in_table: 判断不同股票组合之间的重叠度
+(8) gen_macro_var_list: 生成宏变量
 ****/ 
 
 /** =======================================================================**/
@@ -143,3 +145,98 @@ options validvarname=any; /* 支持中文变量名 */
 %MEND plot_normal;
 
 
+/** 模块6: 计算分布情况 */
+/** 输入:
+(1) input_table: &by_var. / &cal_var.
+(2) by_var: 分组变量，多个用空格分离
+(3) cal_var: 统计变量(单变量)
+**/
+
+%MACRO cal_dist(input_table, by_var, cal_var, out_table=stat);
+	PROC SORT DATA = &input_table.;
+		BY &by_var.
+		;
+	RUN;
+	PROC UNIVARIATE DATA = &input_table. NOPRINT;
+		BY &by_var.
+		;
+		VAR &cal_var.
+		;
+		OUTPUT OUT = &out_table. N = obs mean = mean std = std pctlpts = 100 90 75 50 25 10 0
+		pctlpre = p;
+	QUIT;
+%MEND cal_dist;
+
+
+/** 模块7: 判断不同股票组合之间的重叠度 */
+/** 输入:
+(1) input_table: end_date/stock_code
+(2) cmp_table; end_date/ stock_code
+(3) is_strict: 1-要求日期完全吻合 0-允许往前寻找cmp_table中最近的日期
+(4) mark_col(character): 标注变量 1- 在cmp_table中 0-不在
+
+输出：output_table: input_table + &mark_col.
+**/
+
+%MACRO mark_in_table(input_table, cmp_table, mark_col, output_table, is_strict=0);
+	%IF %SYSEVALF(&is_strict.=0) %THEN %DO;
+		PROC SQL;
+			CREATE TABLE date_input AS
+			SELECT distinct end_date
+			FROM &input_table.
+			ORDER BY end_Date;
+		QUIT;
+		PROC SQL;
+			CREATE TABLE date_cmp AS
+			SELECT distinct end_date
+			FROM &cmp_table.
+			ORDER BY end_date;
+		QUIT;
+		%adjust_date_to_mapdate(rawdate_table=date_input, mapdate_table=date_cmp, 
+			raw_colname=end_date, map_colname=end_date, output_table=tt_result,is_backward=1, is_included=1);
+		PROC SQL;
+			CREATE TABLE tt_input AS
+			SELECT A.*, B.map_end_date
+			FROM &input_table. A LEFT JOIN tt_result B
+			ON A.end_date = B.end_date
+			ORDER BY A.end_Date, A.stock_code;
+		QUIT;
+		PROC SQL;
+			DROP TABLE date_input, date_cmp, tt_result;
+		QUIT;
+	%END;
+	%ELSE %DO;
+		DATA tt_input;
+			SET &input_table.;
+			map_end_Date =end_date;
+		RUN;
+	%END;
+	
+	/** 重合度 */
+	PROC SQL;
+		CREATE TABLE &output_table. AS
+		SELECT A.*, B.stock_code AS stock_code_b
+		FROM tt_input A LEFT JOIN &cmp_table. B
+		ON A.map_end_date = B.end_date AND A.stock_code = B.stock_code
+		ORDER BY A.end_date, A.stock_code;
+	QUIT;
+
+	DATA &output_table.(drop = stock_code_b map_end_date);
+		SET &output_table.;
+		IF not missing(stock_code_b) THEN &mark_col. = 1;
+		ELSE &mark_col. = 0;
+	RUN;
+	PROC SQL;
+		DROP TABLE tt_input;
+	QUIT;
+%MEND mark_in_table;
+
+/** 模块8: 生成宏变量 */
+%MACRO gen_macro_var_list(input_table, var_name, var_macro, nobs_macro);
+	PROC SQL NOPRINT;
+          SELECT distinct &var_name., count(distinct &var_name.)
+          INTO :&var_macro. SEPARATED BY ' ',
+               :&nobs_macro.
+          FROM &input_table.;
+     QUIT;
+%MEND gen_macro_var_list;
