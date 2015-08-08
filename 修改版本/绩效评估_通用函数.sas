@@ -16,153 +16,119 @@
 /** 全局表: 
 (1) busday **/
 /** 输入: 
-(1) stock_pool: date / stock_code/ weight/其他
-(2) adjust_date_table: date (如果stock_pool的日期超出adjust_table的范围，将无效。 如果adjust_table中有stock_pool没有的日期，则认为当天股票池中没有股票)
-(3) move_date_forward: 是否需要将date自动往前调整一个交易日，作为end_date  **/
-/** 输出:
-(1) output_stock_pool: end_date/effective_date/stock_code/weight/其他 **/
+(1) index_pool: 待比较组合，包含:date/&index_ret. (日收益率)
+(2) bm_pool: 基准组合，包含:date/&bm_ret. (日收益率)
+(3) index_ret: 待比较组合日收益率列名
+(4) bm_ret: 基准组合日收益率列名
+(5) start_date: 比较区间开始端
+(6) end_date: 比较区间结束端
+(7) type: 1- 只分析alpha / 2- 只分析index_pool中的绝对收益
+(8) output_table: year/ret/std/ir/hit_ratio/index_draw (yea=0表示在整个区间内，数据经过年化)
 
-/** 特殊说明: 正常情况下，都认为如果股票池信号是在前一天收盘后至12:00生成的，即date是昨天的日期，则设定end_date = date, effective_date为end_date下一个交易日 
-  		  特殊情况下，如果股票池信号是在今天0:00-开盘前生成的，即date是今天的日期，则在生成调仓记录的时候，应将date自动往前调整一个交易日。
-		  特殊情况的处理主要是为了统一 **/
-
+注：如果两个组合index_pool和bm_pool覆盖的范围不同，start_date和end_date将自动调整到保证都在二者的覆盖去见。否则在计算alpha时容易出错。
+***/
 
 /**** 模块14： 策略评价(全样本) ***/
-%MACRO eval_pfmance();
-
-		/* 回测区间统计 */
-		DATA ba.summary_day(drop = max_bm max_index);
-			SET ba.summary_day;
-			year = year(date);
-			month = month(date);
-			RETAIN max_bm .;
-			RETAIN max_index .;
-
-			/* 计算最大回撤 */
-			IF bm_index >= max_bm THEN max_bm = bm_index;
-			bm_draw = (bm_index - max_bm)/max_bm * 100;
-			IF index >= max_index THEN max_index = index;
-			index_draw = (index - max_index)/max_index *100;
-		RUN;
-
-		/* 按年度计算最大回撤，累计alpha，基准累计收益，指数累计收益 */
-		DATA ba.summary_day(drop = max_bm max_index);
-			SET ba.summary_day;
-			BY year;
-			RETAIN max_bm .;
-			RETAIN max_index .;
-			RETAIN accum_ret_year 0;
-			RETAIN accum_bm_ret_year 0;
-
-			IF first.year THEN DO;
-				max_bm = .;
-				max_index = .;
-				accum_ret_year = 0;
-				accum_bm_ret_year = 0;
-			END;
-
-			/* 计算最大回撤 */
-			IF bm_index >= max_bm THEN max_bm = bm_index;
-			bm_draw_year = (bm_index - max_bm)/max_bm * 100;
-			IF index >= max_index THEN max_index = index;
-			index_draw_year = (index - max_index)/max_index *100;
-			
-			/* 累计alpha，基准累计收益，指数累计收益 */
-			accum_ret_year  = ((1+accum_ret_year/100)*(1+daily_ret_p/100)-1)*100;
-			accum_bm_ret_year  = ((1+accum_bm_ret_year/100)*(1+bm_ret/100)-1)*100;
-			accum_alpha_year = accum_ret_year - accum_bm_ret_year;	
-		RUN;
-
-	 /* 汇总指标 */
-	/* 累计收益率 + 基准收益率 + 累积alpha + alpha波动率 + IC + 胜率 + 平均持仓比例 + 换手率 + 最大回撤(%) */
- 
-		
-		/* 年度数据 */
-		DATA stat1(rename = (accum_ret_year = accum_ret accum_bm_ret_year = accum_bm_ret accum_alpha_year = accum_alpha));
-			SET ba.summary_day(keep = year accum_ret_year accum_bm_ret_year accum_alpha_year tar_nstock);
-			BY year;
-			IF last.year;
-		RUN;
+%MACRO eval_pfmance(index_pool, bm_pool, index_ret, bm_ret, start_date, end_date, type, output_table);
+	%IF %SYSEVALF(&type. = 1) %THEN %DO;
 		PROC SQL;
-			CREATE TABLE stat2 AS
-			SELECT year, 
-			sqrt(var(daily_alpha))*sqrt(252) AS sd_alpha,
-			sum(daily_alpha)*sqrt(252)/(count(1)*sqrt(var(daily_alpha))) AS ir,
-			mean(is_hit) AS hit_ratio,
-			mean(is_select_hit) AS select_hit_ratio,
-			mean(is_indus_hit) AS indus_hit_ratio,
-			mean(is_inter_hit) AS inter_hit_ratio,
-			sum(pos_t) AS turnover,
-			min(index_draw_year) AS index_draw,
-			min(bm_draw_year) AS bm_draw,
-			sum(indus_daily_alpha) AS indus_alpha,
-			sum(select_daily_alpha) AS select_alpha,
-			sum(inter_daily_alpha) AS inter_alpha,
-			mean(sub_bm_wt) AS sub_bm_wt
-			FROM ba.summary_day
-			GROUP BY year;
+			CREATE TABLE tt_summary_day AS
+			SELECT A.date, coalesce(A.&index_ret.,0)-coalesce(B.&bm_ret.,0) AS ret
+			FROM &index_pool. A LEFT JOIN &bm_pool. B
+			ON A.date = B.date 
+			WHERE A.date >= (SELECT min(date) FROM &bm_pool.) 
+			AND A.date <= (SELECT max(date) FROM &bm_pool.)
+			AND A.date >= "&start_date."d
+			AND A.date <= "&end_date."d
+			ORDER BY A.date;
 		QUIT;
-
+	%END;
+	%ELSE %IF %SYSEVALF(&type.= 2) %THEN %DO;
 		PROC SQL;
-			CREATE TABLE summary_stat1 AS
-			SELECT A.*, B.*
-			FROM stat1 A JOIN stat2 B
-			ON A.year = B.year
-			ORDER BY A.year;
+			CREATE TABLE tt_summary_day AS
+			SELECT A.date, coalesce(A.&index_ret.,0) AS ret
+			FROM &index_pool. A
+			WHERE A.date >= "&start_date."d
+			AND A.date <= "&end_date."d
+			ORDER BY A.date;
 		QUIT;
+	%END;
+	/** 计算指数 */
+	DATA tt_summary_day;
+		SET tt_summary_day;
+		RETAIN accum_ret 0;
+		accum_ret = ((accum_ret/100 + 1)*(1+ret/100)-1)*100; /* 以复权因子计算 */
+		index = 1000 * (1+accum_ret/100);
+		year = year(date);
+	RUN;
 
-		/* 回测区间数据 */
-		DATA stat1(drop = index bm_index);
-			SET ba.summary_day(keep = index bm_index accum_alpha tar_nstock) end = is_end;
-			IF is_end = 1;
-			accum_ret = index - 100;
-			accum_bm_ret = bm_index - 100;
-			year = 0;
-		RUN;
-		PROC SQL;
-			CREATE TABLE stat2 AS
-			SELECT 0 AS year, 
-			sqrt(var(daily_alpha))*sqrt(252) AS sd_alpha,
-			sum(daily_alpha)*sqrt(252)/(count(1)*sqrt(var(daily_alpha))) AS ir,
-			sum(is_hit)/count(1) AS hit_ratio,
-			mean(is_select_hit) AS select_hit_ratio,
-			mean(is_indus_hit) AS indus_hit_ratio,
-			mean(is_inter_hit) AS inter_hit_ratio,
-			sum(pos_t) AS turnover,
-			min(index_draw) AS index_draw,
-			min(bm_draw) AS bm_draw,
-			sum(indus_daily_alpha) AS indus_alpha,
-			sum(select_daily_alpha) AS select_alpha,
-			sum(inter_daily_alpha) AS inter_alpha,
-			mean(sub_bm_wt) AS sub_bm_wt
-			FROM ba.summary_day
-		QUIT;
-		PROC SQL;
-			CREATE TABLE summary_stat2 AS
-			SELECT A.*, B.*
-			FROM stat1 A JOIN stat2 B
-			ON A.year = B.year
-			ORDER BY A.year;
-		QUIT;
-		DATA ba.summary_stat(drop = i);
-			SET summary_stat1 summary_stat2;
-			ARRAY var_a(12) accum_ret--ir turnover--sub_bm_wt;
-			DO i = 1 TO 12;
-				var_a(i) = round(var_a(i),0.01);
-			END;
-			hit_ratio = round(hit_ratio,0.0001);
-			select_hit_ratio = round(select_hit_ratio, 0.0001);
-			indus_hit_ratio = round(indus_hit_ratio, 0.0001);
-			inter_hit_ratio = round(inter_hit_ratio, 0.0001);
-		RUN; 
+	/* Step1: 按年度统计 */
+	/* Step1-1:按年度计算最大回撤，累计收益(未年化) */
+	DATA tt_summary_day(drop = max_index);
+		SET tt_summary_day;
+		BY year;
+		RETAIN max_index .;
+		RETAIN accum_ret_year 0;
+		IF first.year THEN DO;
+			max_index = .;
+			accum_ret_year = 0;
+		END;
+		IF index >= max_index THEN max_index = index;
+		index_draw_year = (index - max_index)/max_index *100;
+		accum_ret_year  = ((1+accum_ret_year/100)*(1+ret/100)-1)*100;
+	RUN;
 
-		PROC TRANSPOSE DATA =ba.summary_stat   OUT = ba.summary_stat
-			prefix = Y_  name = stat1;
-			id year;
-		RUN;
-		
-		PROC SQL;
-			DROP TABLE summary_stat1, summary_stat2, stat1, stat2;
-		QUIT;
+	DATA tt_stat1(rename = (accum_ret_year = accum_ret));
+		SET tt_summary_day(keep = year accum_ret_year) ;
+		BY year;
+		IF last.year;
+	RUN;
+	/* Step1-2: 分年度：收益率+ 波动率 + IR + 胜率 + 最大回撤(%) */
+	PROC SQL;
+		CREATE TABLE tt_stat2 AS
+		SELECT year, 
+		sqrt(var(ret))*sqrt(250) AS sd,
+		sum(ret)*sqrt(250)/(count(1)*sqrt(var(ret))) AS ir,
+		sum(ret>0)/count(1) AS hit_ratio,
+		min(index_draw_year) AS index_draw
+		FROM tt_summary_day
+		GROUP BY year;
+	QUIT;
 
+	PROC SQL;
+		CREATE TABLE tt_summary_stat1 AS
+		SELECT A.*, B.*
+		FROM tt_stat1 A JOIN tt_stat2 B
+		ON A.year = B.year
+		ORDER BY A.year;
+	QUIT;
+	
+
+	/* Step2: 整个回测区间数据 */
+	/* Step2-1: 收益率+ 波动率 + IR + 胜率 + 最大回撤(%) */
+	DATA tt_summary_day(drop = max_index);
+		SET tt_summary_day;
+		BY year;
+		RETAIN max_index .;
+		IF index >= max_index THEN max_index = index;
+		index_draw = (index - max_index)/max_index *100;
+	RUN;
+
+	PROC SQL;
+		CREATE TABLE tt_summary_stat2 AS
+		SELECT 0 AS year,
+		mean(ret)*250 AS accum_ret,
+		sqrt(var(ret))*sqrt(250) AS sd,
+		sum(ret)*sqrt(250)/(count(1)*sqrt(var(ret))) AS ir,
+		sum(ret>0)/count(1) AS hit_ratio,
+		min(index_draw) AS index_draw
+		FROM tt_summary_day;
+	QUIT;
+
+	DATA &output_table.;
+		SET tt_summary_stat2 tt_summary_stat1;
+	RUN;
+	PROC SQL;
+		DROP TABLE tt_summary_stat1, tt_summary_stat2, tt_stat1, tt_stat2, tt_summary_day;
+	QUIT;
 %MEND eval_pfmance;

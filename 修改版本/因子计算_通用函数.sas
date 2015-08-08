@@ -640,9 +640,9 @@
 /** 输入:
 (1) input_table: end_date / stock_code / &colname.
 (2) colname(character): 因子名
-(3) type: 1-根据百分点进行分组(适合连续型因子) 2- 根据绝对值进行分组(适合离散型因子)
-(4) threshold: type=1时，表示需要划分的百分位点(如: 50/90等); type=2时，表示绝对值
-(4) is_decrease: 0-选小,1-选大,2-恰好相等
+(3) type: 1-根据百分点进行分组(适合连续型因子) 2- 根据绝对值进行分组(适合离散型因子) 3-根据绝对排名进行分组
+(4) threshold: type=1时，表示需要划分的百分位点(如: 50/90等); type=2时，表示绝对值; type=3时，表示绝对排名
+(4) is_decrease: 对于type=1或者2: 0-选小,1-选大,2-恰好相等; 对于type=3,0-最小的前N位, 1-最大的前N位
 (5) is_cut: 1-输出只选取最终的子集。 0-保留全样本，但新增字段cut_mark(1-required 0-filter)
 
 
@@ -651,13 +651,14 @@
 **/
 
 %MACRO cut_subset(input_table, colname, output_table, type=1, threshold=50, is_decrease=1, is_cut=1);
+	/** type=1或者type=2时，适合相同的模板 */
 	%IF %SYSEVALF(&type.=1) %THEN %DO;	
 		%cal_percentitle(&input_table., &colname., &threshold., pct_table);
 		DATA pct_table;
 			SET pct_table(rename = (pct&threshold = threshold));
 		RUN;
 	%END;
-	%ELSE %DO;
+	%ELSE %IF %SYSEVALF(&type.=2) %THEN %DO;
 		PROC SQL;
 			CREATE TABLE pct_table AS  /* 构造一样的形式 */
 			SELECT distinct end_date, &threshold. AS threshold
@@ -665,6 +666,54 @@
 			ORDER BY end_Date;
 		QUIT;
 	%END; 
+	%ELSE %IF %SYSEVALF(&type.=3) %THEN %DO;
+		DATA tt;
+			SET &input_table.(keep = end_date &colname.);
+		RUN;
+		PROC SORT DATA = tt;
+			BY end_date descending &colname.;
+		RUN;
+		DATA tt;
+			SET tt;
+			BY end_date;
+			RETAIN decrease_rank 0;
+			IF first.end_date THEN decrease_rank = 0;
+			decrease_rank + 1;
+		RUN;
+		PROC SORT DATA = tt;
+			BY end_date &colname.;
+		RUN;
+		DATA tt;
+			SET tt;
+			BY end_date;
+			RETAIN increase_rank 0;
+			IF first.end_date THEN increase_rank = 0;
+			increase_rank + 1;
+		RUN;
+		%IF %SYSEVALF(&is_decrease.=1) %THEN %DO;
+			PROC SQL;
+				CREATE TABLE pct_table AS  /* 构造一样的形式 */
+				SELECT distinct end_date, &colname. AS threshold
+				FROM tt 
+				WHERE decrease_rank <= &threshold.
+				GROUP BY end_date
+				HAVING &colname. = min(&colname.)
+				ORDER BY end_date;
+			QUIT;
+		%END;
+		%ELSE %IF %SYSEVALF(&is_decrease.=0) %THEN %DO;
+			PROC SQL;
+				CREATE TABLE pct_table AS  /* 构造一样的形式 */
+				SELECT distinct end_date, &colname. AS threshold
+				FROM tt 
+				WHERE increase_rank <= &threshold.
+				GROUP BY end_date
+				HAVING &colname. = max(&colname.)
+				ORDER BY end_date;
+			QUIT;
+		%END;
+	%END; 
+	
 	PROC SQL;
 		CREATE TABLE tmp AS
 		SELECT A.*, B.threshold 
@@ -679,20 +728,22 @@
 			ELSE cut_mark = 0;
 		RUN;
 	%END;
-	%ELSE %IF %SYSEVALF(&is_decrease.=0) %THEN %DO;;
+	%ELSE %IF %SYSEVALF(&is_decrease.=0) %THEN %DO;
 		DATA &output_table.(drop = threshold);
 			SET tmp;
 			IF &colname. <= threshold THEN cut_mark = 1;
 			ELSE cut_mark = 0;
 		RUN;
 	%END;
-	%ELSE %DO;;
+	%ELSE %IF %SYSEVALF(&is_decrease.=2) %THEN %DO;
 		DATA &output_table.(drop = threshold);
 			SET tmp;
 			IF &colname. = threshold THEN cut_mark = 1;
 			ELSE cut_mark = 0;
 		RUN;
 	%END;
+
+
 	 %IF %SYSEVALF(&is_cut.=1) %THEN %DO;
 		DATA &output_table.(drop = cut_mark);
 			SET &output_table.;
