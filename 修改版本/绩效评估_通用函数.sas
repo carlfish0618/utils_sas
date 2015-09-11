@@ -27,8 +27,8 @@
 
 注：如果两个组合index_pool和bm_pool覆盖的范围不同，start_date和end_date将自动调整到保证都在二者的覆盖去见。否则在计算alpha时容易出错。
 ***/
-
-/**** 模块14： 策略评价(全样本) ***/
+/**** (全样本) ***/
+/** 胜率为月度胜率 */
 %MACRO eval_pfmance(index_pool, bm_pool, index_ret, bm_ret, start_date, end_date, type, output_table);
 	%IF %SYSEVALF(&type. = 1) %THEN %DO;
 		PROC SQL;
@@ -60,6 +60,7 @@
 		accum_ret = ((accum_ret/100 + 1)*(1+ret/100)-1)*100; /* 以复权因子计算 */
 		index = 1000 * (1+accum_ret/100);
 		year = year(date);
+		month = month(date);
 	RUN;
 
 	/* Step1: 按年度统计 */
@@ -94,12 +95,27 @@
 		FROM tt_summary_day
 		GROUP BY year;
 	QUIT;
+	/** Step1-3: 分年度：月度胜率 */
+	PROC SQL;
+		CREATE TABLE tmp AS
+		SELECT year, month, sum(ret) AS m_ret
+		FROM tt_summary_day
+		GROUP BY year, month;
+	QUIT;
+	PROC SQL;
+		CREATE TABLE tt_stat3 AS
+		SELECT year, sum(m_ret>0)/count(1) AS hit_ratio_m
+		FROM tmp
+		GROUP BY year;
+	QUIT;
 
 	PROC SQL;
 		CREATE TABLE tt_summary_stat1 AS
-		SELECT A.*, B.*
+		SELECT A.*, B.*, C.hit_ratio_m
 		FROM tt_stat1 A JOIN tt_stat2 B
 		ON A.year = B.year
+		JOIN tt_stat3 C
+		ON A.year = C.year
 		ORDER BY A.year;
 	QUIT;
 	
@@ -114,21 +130,39 @@
 		index_draw = (index - max_index)/max_index *100;
 	RUN;
 
+	/** Step2-2: 分年度：月度胜率 */
+	PROC SQL;
+		CREATE TABLE tmp AS
+		SELECT year, month, sum(ret) AS m_ret
+		FROM tt_summary_day
+		GROUP BY year, month;
+	QUIT;
+	PROC SQL;
+		CREATE TABLE tt_stat3 AS
+		SELECT 0 AS year, sum(m_ret>0)/count(1) AS hit_ratio_m
+		FROM tmp
+	QUIT;
+
 	PROC SQL;
 		CREATE TABLE tt_summary_stat2 AS
-		SELECT 0 AS year,
+		SELECT A.*, B.hit_ratio_m 
+		FROM
+		(SELECT 0 AS year,
 		mean(ret)*250 AS accum_ret,
 		sqrt(var(ret))*sqrt(250) AS sd,
 		sum(ret)*sqrt(250)/(count(1)*sqrt(var(ret))) AS ir,
 		sum(ret>0)/count(1) AS hit_ratio,
 		min(index_draw) AS index_draw
-		FROM tt_summary_day;
+		FROM tt_summary_day) A LEFT JOIN tt_stat3 B
+		ON A.year = B.year;
 	QUIT;
+
+
 
 	DATA &output_table.;
 		SET tt_summary_stat2 tt_summary_stat1;
 	RUN;
 	PROC SQL;
-		DROP TABLE tt_summary_stat1, tt_summary_stat2, tt_stat1, tt_stat2, tt_summary_day;
+		DROP TABLE tmp, tt_summary_stat1, tt_summary_stat2, tt_stat1, tt_stat2, tt_stat3, tt_summary_day;
 	QUIT;
-%MEND eval_pfmance;
+%MEND eval_pfmance2;
