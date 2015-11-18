@@ -1,16 +1,18 @@
-/*** 事件研究_配置文件 **/
+/** 事件研究-配置文件-本地版本*/
 
 /** ！！外部变量: env_start_date **/
 
 /*%LET env_start_date = 15dec2011;*/
 
 
+/*** 事件研究_配置文件 **/
+
 /** 1- A股行情 **/
 PROC SQL;
 	CREATE TABLE hqinfo AS
 	SELECT datepart(end_Date) AS end_date FORMAT yymmdd10.,
 	stock_code, close, high, low, open, vol, value, istrade, pre_close, factor
-	FROM hq.hqinfo
+	FROM database.hqinfo
 	WHERE type = "A" AND "&env_start_date."d <= datepart(end_Date)
 	ORDER BY end_date, stock_code;
 QUIT;
@@ -20,7 +22,7 @@ PROC SQL;
 	CREATE TABLE index_hqinfo AS
 	SELECT datepart(end_Date) AS end_date FORMAT yymmdd10.,
 	stock_code, close, pre_close
-	FROM hq.hqinfo
+	FROM database.hqinfo
 	WHERE type = "S" AND "&env_start_date."d <= datepart(end_Date)
 	AND stock_code IN ("000905","000300", "399102", "399101","000001","000906")
 	ORDER BY end_date, stock_code;
@@ -84,19 +86,9 @@ QUIT;
 
 PROC SQL;
 	CREATE TABLE stock_info_table AS
-	SELECT F16_1090 AS stock_code, OB_OBJECT_NAME_1090 AS stock_name,  F17_1090, F18_1090, F19_1090 AS is_delist, F6_1090 AS bk
-	FROM locwind.tb_object_1090
-	WHERE F4_1090 = 'A';
+	SELECT *
+	FROM database.stock_info_table;
 QUIT;
-
-DATA stock_info_table(drop = F17_1090 F18_1090);
-	SET stock_info_table;
-	list_date = input(F17_1090,yymmdd8.);
-	delist_date = input(F18_1090,yymmdd8.);
-	IF index(stock_name,'ST') THEN is_st = 1;
-	ELSE is_st = 0;
-	FORMAT list_date delist_date mmddyy10.;
-RUN;
 
 
 /* 5- 特殊交易日表 */
@@ -190,3 +182,55 @@ RUN;
 
 
 
+/*** 自由流通市值表 */
+PROC SQL;
+	CREATe TABLE fg_wind_freeshare AS
+	SELECT stock_code, datepart(end_date) AS end_date FORMAT yymmdd10.,
+		freeshare, total_share, a_share, liqa_share
+	FROM database.fg_wind_freeshare
+	WHERE datepart(end_date) >= "&env_start_date."d
+	ORDER BY end_date, stock_code;
+QUIT;
+
+/** 行业信息表 */
+PROC SQL;
+	CREATe TABLE fg_wind_sector AS
+	SELECT stock_code, datepart(end_date) AS end_date FORMAT yymmdd10.,
+		o_code AS indus_code, o_name AS indus_name
+	FROM database.fg_wind_sector
+	WHERE datepart(end_date) >= "&env_start_date."d
+	ORDER BY end_date, stock_code;
+QUIT;
+
+
+/** 构建富国股票池2 */
+PROC SQL;
+	CREATE TABLE fg_stock_pool AS
+	(
+		SELECT stock_code, datepart(end_date) AS end_date FORMAT yymmdd10.
+		FROM database.fg_eps_info
+		WHERE cnum >= 4 AND datepart(end_date) >= "&env_start_date."d AND stock_code NOT IN ("600837", "000166")
+	) 
+	ORDER BY end_date;
+QUIT;
+
+/** 取6月末的最后一天，认为是股票池 */
+PROC SQL;
+	CREATE TABLE tmp AS
+	SELECT *, year(end_date) AS year
+	FROM fg_stock_pool
+	WHERE month(end_date) = 6 
+	GROUP BY year(end_date), month(end_date)
+	HAVING end_date = max(end_date)
+	ORDER BY end_date, stock_code;
+QUIT;
+DATA fg_stock_pool;
+	SET tmp;
+RUN;
+/** 因为股票池的日期，有的不是交易日需要进行调整 */
+%adjust_date_modify(busday_table=busday , raw_table=fg_stock_pool ,colname=end_date,  
+	output_table=fg_stock_pool, is_forward = 0 );
+DATA fg_stock_pool(drop = adj_end_date end_date_is_busday);
+	SET fg_stock_pool;
+	end_date = adj_end_date;
+RUN;

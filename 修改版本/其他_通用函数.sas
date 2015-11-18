@@ -10,6 +10,9 @@
 (6) cal_dist:计算分布情况
 (7) mark_in_table: 判断不同股票组合之间的重叠度
 (8) gen_macro_var_list: 生成宏变量
+(9) get_nearby_data: 取间隔N期的数据
+(10) output_to_csv: 输出到csv
+
 ****/ 
 
 /** =======================================================================**/
@@ -240,3 +243,56 @@ options validvarname=any; /* 支持中文变量名 */
           FROM &input_table.;
      QUIT;
 %MEND gen_macro_var_list;
+
+/** 模块9: 取间隔N期的变量值 */
+/**
+(1) input_table: 
+(2) identity: 主体标识，可以是stock_code等
+(3) raw_col: 需要提取的变量名
+(4) date_col: 日期列
+(5) output_col: 输出后，对应的变量名
+(6) offset: 向前(负数)/向后(正数)几期
+**/
+%MACRO get_nearby_data(input_table, identity, raw_col,date_col, output_col, offset, output_table);
+	PROC SQL;
+		CREATE TABLE tt_date AS
+		SELECT distinct &date_col.
+		FROM &input_table.
+		ORDER BY &date_col.;
+	QUIT;
+	DATA tt_date;
+		SET tt_date;
+		id = _N_;
+	RUN;
+	PROC SQL;
+		CREATE TABLE tmp AS
+		SELECT A.*, B.id AS date_id
+		FROM &input_table. A LEFT JOIN tt_date B
+		ON A.&date_col. = B.&date_col.
+		ORDER BY date_id;
+	QUIT;
+	PROC SQL;
+		CREATE TABLE tmp2 AS
+		SELECT A.*, B.&raw_col. AS &output_col.
+		FROM tmp A LEFT JOIN tmp B
+		ON A.&identity. = B.&identity. AND B.date_id - A.date_id = &offset.
+		ORDER BY  A.&identity., A.&date_col.;
+	QUIT;
+	DATA &output_table.;
+		SET tmp2;
+		DROP date_id;
+	RUN;
+	PROC SQL;
+		DROP TABLE tt_date, tmp, tmp2;
+	QUIT;
+%MEND get_nearby_data;
+
+%MACRO output_to_csv(csv_path, input_table);
+	PROC EXPORT DATA = &input_table.
+		OUTFILE = "&csv_path."
+		DBMS = CSV
+		REPLACE;
+	RUN;
+%MEND output_to_csv;
+
+  

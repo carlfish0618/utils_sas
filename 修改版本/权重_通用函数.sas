@@ -22,23 +22,23 @@
 (1) output_stock_pool: end_date/stock_code/weight(调整后) /其他
 **/
 
-%MACRO neutralize_weight(stock_pool, output_stock_pool);
+%MACRO neutralize_weight(stock_pool, output_stock_pool, col=weight);
 	PROC SQL NOPRINT;	
 		CREATE TABLE tmp AS
-		SELECT A.*, B.t_weight
+		SELECT A.*, B.t_&col.
 		FROM &stock_pool. A LEFT JOIN 
 		(
-		SELECT end_date, sum(weight) AS t_weight
+		SELECT end_date, sum(&col.) AS t_&col.
 		FROM &stock_pool.
 		GROUP BY end_date
 		)B
 		ON A.end_date = B.end_date;
 	QUIT;
 
-	DATA &output_stock_pool.(drop = t_weight);
+	DATA &output_stock_pool.(drop = t_&col.);
 		SET tmp;
-		IF t_weight ~= 0 THEN weight = round(weight/t_weight,0.00001);  
-		ELSE weight = 0;
+		IF t_&col. ~= 0 THEN &col. = round(&col./t_&col.,0.00001);  
+		ELSE &col. = 0;
 	RUN;
 	PROC SQL;
 		DROP TABLE tmp;
@@ -666,17 +666,17 @@ type: 标注位，是否为指数代码(0- 个股/1-基准指数/2-行业指数)
 /** 输出:
 (1) output_stock_pool: end_date/stock_code/weight(调整后)/type/其他 
 其中:
-type: 标注位，是否为指数代码(0- 个股/1-基准指数/2-行业指数)
+&mark.: 标注位，是否为指数代码(0- 个股/1-基准指数/2-行业指数)
 **/
 
 /** 要求：原始权重已经标准化了 */
 
-%MACRO fill_in_index(stock_pool,all_max_weight, ind_max_weight, output_stock_pool,index_code);
+%MACRO fill_in_index(stock_pool,all_max_weight, ind_max_weight, output_stock_pool,index_code, mark=type);
 	/* Step1: 计算个股权重 */
 	DATA tt_ind_pool;
 		SET &stock_pool.;
 		IF weight > &ind_max_weight. THEN weight = &ind_max_weight;  /* 有个股上限 */
-		type = 0;
+		&mark. = 0;
 	RUN;
 	
 	/* Step2: 调整完个股权重后，重新计算组合加总权重。针对所有调整日，必要时，增加相应的基准指数 */
@@ -726,17 +726,17 @@ type: 标注位，是否为指数代码(0- 个股/1-基准指数/2-行业指数)
 	DATA tt_info;
 		SET tt_info(keep = end_date add_bm_weight rename = (add_bm_weight = weight));
 		stock_code = "&index_code.";
-		type = 1; 
+		&mark. = 1; 
 		IF weight > 0;
 	RUN;
 
 	DATA &output_stock_pool.;
 		SET tt_ind_pool tt_info;
-		IF weight > 0;
+/*		IF weight > 0;*/
 	RUN;
 	
 	PROC SORT DATA = &output_stock_pool.;
-		BY end_date descending type stock_code;
+		BY end_date descending &mark. stock_code;
 	RUN;
 
 	PROC SQL;

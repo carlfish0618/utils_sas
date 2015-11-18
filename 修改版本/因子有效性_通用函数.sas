@@ -209,13 +209,6 @@
 /**　输出：
 (1) &fname._stat: end_date/n_obs_f1/p_ic_f1/s_ic_f1 (日期列表以factor_table中的end_date为准)
 **/
-%LET factor_table = subdata;
-%LET return_table = ot2;
-%LET group_name = stock_code;
-%LET fname = click;
-%LET index = 1;
-
-
 %MACRO single_factor_ic(factor_table, return_table, group_name, fname, output_table, type=1);
 	DATA &fname._t_raw;
 		SET &factor_table.(keep = end_date &group_name. &fname.);

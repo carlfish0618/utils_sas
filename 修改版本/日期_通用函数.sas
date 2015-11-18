@@ -8,6 +8,7 @@
 (6) gen_test_busdate: 生成回测日期
 (7) gen_adjust_busdate：生成调仓日期（可以区分日频/月频/周频(允许周中某一天)
 (8) adjust_date_to_mapdate: 根据mapdate_table将rawdate_table对应到最近的一个日期(可以往前或者往后，包含或者不包含map_busdate当日)
+(9) move_date_offset：取相邻N期的日期
 
 ***/
 
@@ -178,7 +179,7 @@
 (3) end_date: 结束日期
 (4) rename: 是否进行重命名
 (5) type: 1- 特定日期 2- 第N个交易日
-(6) trade_day: 当type=1时，trade_day=1表示周日，2表示周一，以此类推（取值范围：0-6)。当type=2时，trade_day=1表示每周第一个交易日(取值范围：>0)。
+(6) trade_day: 当type=1时，trade_day=0表示周一，6表示周日，以此类推（取值范围：0-6)。当type=2时，trade_day=1表示每周第一个交易日(取值范围：>0)。
 **/
 /**　输出：
 (1) output_table: &rename.
@@ -200,6 +201,7 @@
 		RUN;
 	%END;
 	%ELSE %DO;
+		/** 年头和年末的week可能都为0 */
 		PROC SORT DATA = tt_busdate;
 			BY year week date;
 		RUN;
@@ -226,7 +228,7 @@
 	%END;
 	PROC SQL;
 		DROP TABLE tt_busdate;
-	RUN;
+	QUIT;
 %MEND get_weekday_date;
 
 /** 模块5：生成每日日期 **/
@@ -336,7 +338,7 @@
 				SELECT A.*, B.&map_colname. AS map_&raw_colname.
 				FROM &rawdate_table. A LEFT JOIN tt_mapdate B
 				ON B.&map_colname. < A.&raw_colname. <= B.next_&map_colname.
-				ORDER BY A.&raw_colname.;W
+				ORDER BY A.&raw_colname.;
 			QUIT;
 			PROC SQL;
 				UPDATE tt_output
@@ -392,6 +394,59 @@
 		DROP TABLE tt_output, tt_mapdate;
 	QUIT;
 %MEND adjust_date_to_mapdate;
+
+
+/** 模块9: 取相邻N期的日期(以input_table中的date来定义相邻期) */
+/**
+(1) input_table: 要求日期都出现在busday_table中
+(2) date_col: 日期列
+(3) output_col: 输出后，对应的变量名
+(4) offset: 向前(负数)/向后(正数)几期
+(5) is_fill: 如果为1，则用最小或者最大日期进行补全。如果为0，则默认为空
+**/
+%MACRO move_date_offset(input_table, date_col, output_col, offset, output_table, is_fill);
+	PROC SQL;
+		CREATE TABLE tmp AS
+		SELECT distinct &date_col.
+		FROM &input_table.
+		ORDER BY &date_col.;
+	QUIT;
+	DATA tmp;
+		SET tmp;
+		date_id = _N_;
+	RUN;
+	
+	PROC SQL;
+		CREATE TABLE tmp2 AS
+		SELECT A.*, B.&date_col. AS &output_col.
+		FROM tmp A LEFT JOIN tmp B
+		ON B.date_id - A.date_id = &offset.
+		ORDER BY A.&date_col.;
+	QUIT;
+	%IF %SYSEVALF(&is_fill.=1) %THEN %DO;
+		%IF %SYSEVALF(&offset.>0) %THEN %DO;
+			PROC SQL;
+          		UPDATE tmp2 
+               	SET &output_col.= (SELECT max(&date_col.) FROM tmp)
+               	where missing(&output_col.);
+			QUIT;
+		%END;
+		%ELSE %DO;
+			PROC SQL;
+          		UPDATE tmp2 
+               	SET &output_col.= (SELECT min(&date_col.) FROM tmp)
+               	where missing(&output_col.);
+			QUIT;
+		%END;
+	%END;
+	DATa &output_table.;
+		SET tmp2;
+		DROP date_id;
+	RUN;
+	PROC SQL;
+		DROP TABLE tmp, tmp2;
+	QUIT;
+%MEND move_date_offset;
 
 
 			

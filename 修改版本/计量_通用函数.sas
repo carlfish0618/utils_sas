@@ -15,6 +15,9 @@ options validvarname=any; /* 支持中文变量名 */
 
 /** 模块1: 计算pearson和spearman相关系数 */
 %MACRO cal_coef(data, var1, var2, output_s = corr_s, output_p = corr_p);
+	PROC SORT DATA = &data.;
+		BY end_date;
+	RUN;
 	PROC CORR DATA = &data. pearson spearman OUTP = corr_p OUTS = corr_s NOPRINT;
 		WHERE not missing(&var1.) AND not missing(&var2.);
 		BY end_date;
@@ -122,3 +125,99 @@ options validvarname=any; /* 支持中文变量名 */
 		identify var=&var. stationarity=(pp=&lag.);
 	quit;
 %MEND test_stationarity;
+
+
+/** 模块4: 检验单变量跨期间的相关性 */
+/** 需要调用"其他_通用函数"中的： get_nearby_data 以及同个文件中的：cal_coef */
+/**
+(1) identity: 主体
+(2) raw_col: 变量名
+(3) date_col: 日期字段
+(4) type: 1- spearman 2- pearson 3-nobs
+(5) output_table
+(6) offset_range: 期数
+**/
+%MACRO test_single_var_corr(input_table, identity, raw_col, date_col, 
+		type, output_table, offset_range=12);
+	DATA tt_single;
+		SET &input_table.;
+		KEEP &date_col. &identity. &raw_col.;
+	RUN;
+	PROC SQL;
+		CREATE TABLE tt_output_s AS
+		SELECT distinct &date_col.
+		FROM tt_single
+		ORDER BY &date_col.;
+	QUIT;
+	PROC SQL;
+		CREATE TABLE tt_output_p AS
+		SELECT distinct &date_col.
+		FROM tt_single
+		ORDER BY &date_col.;
+	QUIT;
+	PROC SQL;
+		CREATE TABLE tt_output_nobs AS
+		SELECT distinct &date_col.
+		FROM tt_single
+		ORDER BY &date_col.;
+	QUIT;
+
+	/* 生成未来12个间隔(3年)的因子 */
+	%DO offset = 1 %TO &offset_range.;
+		%get_nearby_data(input_table=tt_single, identity=&identity., raw_col = &raw_col., 
+			date_col= &date_col., output_col = &raw_col._&offset., 
+			offset = &offset., output_table=tt_single);
+		%cal_coef(tt_single, &raw_col., &raw_col._&offset., output_s = corr_s, output_p = corr_p);
+		PROC SQL;
+			CREATE TABLE tmp AS
+			SELECT A.*, B.s_ic AS s_ic_&offset.
+			FROM tt_output_s A LEFT JOIN corr_s B
+			ON A.&date_col. = B.&date_col.
+			ORDER BY A.&date_col.;
+
+			CREATE TABLE tmp2 AS
+			SELECT A.*, B.p_ic AS p_ic_&offset.
+			FROM tt_output_p A LEFT JOIN corr_p B
+			ON A.&date_col. = B.&date_col.
+			ORDER BY A.&date_col.;
+
+			CREATE TABLE tmp3 AS
+			SELECT A.*, B.nobs AS nobs_&offset.
+			FROM tt_output_nobs A LEFT JOIN corr_p B
+			ON A.&date_col. = B.&date_col.
+			ORDER BY A.&date_col.;
+		QUIT;
+		DATA tt_output_s;
+			SET tmp;
+		RUN;
+		DATA tt_output_p;
+			SET tmp2;
+		RUN;
+		DATA tt_output_nobs;
+			SEt tmp3;
+		RUN;
+		%IF %SYSEVALF(&type.=1) %THEN %DO;
+			DATA &output_table.;
+				SET tt_output_s;
+			RUN;
+		%END;
+		%ELSE %IF %SYSEVALF(&type.=2) %THEN %DO;
+			DATA &output_table.;
+				SET tt_output_p;
+			RUN;
+		%END;
+		%ELSE %IF %SYSEVALF(&type.=3) %THEN %DO;
+			DATA &output_table.;
+				SET tt_output_nobs;
+			RUN;
+		%END;
+
+		PROC SQL;
+			DROP TABLe corr_s, corr_p, tmp, tmp2, tmp3;
+		QUIT;
+	%END;
+	PROC SQL;
+		DROP TABLE tt_output_p, tt_output_s, tt_output_nobs;
+	QUIT;
+
+%MEND test_single_var_corr;

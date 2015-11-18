@@ -165,4 +165,4 @@
 	PROC SQL;
 		DROP TABLE tmp, tt_summary_stat1, tt_summary_stat2, tt_stat1, tt_stat2, tt_stat3, tt_summary_day;
 	QUIT;
-%MEND eval_pfmance2;
+%MEND eval_pfmance;
