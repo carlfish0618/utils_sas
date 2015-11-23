@@ -5,6 +5,7 @@
 (1) cal_coef: 计算pearson和spearman相关系数
 (2) granger_test: 格兰杰检验
 (3) test_stationarity: 稳定性检验
+(4) test_single_var_corr：检验单变量跨期间的相关性
 ****/ 
 
 /** =======================================================================**/
