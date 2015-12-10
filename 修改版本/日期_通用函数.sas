@@ -320,7 +320,8 @@
 /** 注2-2：当is_backward=1时，mapdate_table的结束时间要求超过rawdate_table中的结束时间。否则，之后无法匹配的都统一设定为mapdate_table的结束时间。*/
 
 
-%MACRO adjust_date_to_mapdate(rawdate_table, mapdate_table, raw_colname, map_colname, output_table,is_backward=1, is_included=0);
+%MACRO adjust_date_to_mapdate(rawdate_table, mapdate_table, raw_colname, map_colname, 
+				output_table,is_backward=1, is_included=0);
 	PROC SQL;
 		CREATE TABLE tt_mapdate AS
 		SELECT A.&map_colname., 
@@ -512,7 +513,7 @@
 	(1) (input) busday_table: date
 	(2) (input) raw_table: &date_col_name and other columns */
 
-%MACRO map_date_to_index(busday_table, raw_table, date_col_name, raw_table_edit);
+%MACRO map_date_to_index(busday_table, raw_table, date_col_name, raw_table_edit, index_name=date_index);
 	
 	PROC SORT DATA = &busday_table;
 		BY date;
@@ -525,7 +526,7 @@
 
 	PROC SQL;
 		CREATE TABLE ttmp AS
-		SELECT A.*, B.index AS date_index
+		SELECT A.*, B.index AS &index_name.
 		FROM &raw_table. A LEFT JOIN tbusday B
 		ON A.&date_col_name = B.date;
 	QUIT;

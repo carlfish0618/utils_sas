@@ -86,6 +86,8 @@
 %MEND gen_adjust_pool;
 
 
+
+
 /*** 模块2: 根据调仓数据生成每天的股票池 */
 /** 外部表: 
 (1) busday: date **/
@@ -555,4 +557,5 @@
 		DROP TABLE tt_summary_day;
 	QUIT;
 %MEND cal_portfolio_ret;
+
 

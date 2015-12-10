@@ -242,4 +242,23 @@ l_pfmance 中新增月度胜率
 
 
 
+/******** 2015-12-5 ******/
+1.修改：日期_通用函数
+(1) 修改map_date_to_index：把原先设定的日期序号date_index更改为可变字段
 
+2.增加：事件研究_通用函数_版本2.sas
+
+/*** 函数列表：
+	(1) event_gen_windows: 根据窗口长度，生成事件窗口 
+	(2) event_get_marketdata:标注事件窗口计算收益的基准日，并获取基本信息
+	(3) event_mark_win:标注事件窗口是否超出上市、退市，以及是否涨跌超过10%+(一般是复牌后行为) 
+	(4) event_cal_accum_alpha:计算累计收益率(用单日累乘的方法)
+	(5) event_smooth_rtn:在考虑特殊样本点的情况下，对累计收益率进行平滑
+	(6) event_cal_stat: 根据提供的分组变量，汇总每个窗口的变量取值情况 
+	(7) event_addindex_stat:为event_cal_stat的结果增加index变量，便于画图
+	(8) event_stack_stat: 将event_cal_stat或者event_addindex_stat的结果进行stack，便于查看
+	(9) event_mdf_stat: 将event_cal_stat或者event_addindex_stat的结果进行简化，并转置win.方便输出到报告。输出特定窗口区间的rtn和prob 
+********/
+
+3. 修改：其他_通用函数
+(1) 修改cal_dist,允许设置不同的pctlpts

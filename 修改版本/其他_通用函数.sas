@@ -155,7 +155,7 @@ options validvarname=any; /* 支持中文变量名 */
 (3) cal_var: 统计变量(单变量)
 **/
 
-%MACRO cal_dist(input_table, by_var, cal_var, out_table=stat);
+%MACRO cal_dist(input_table, by_var, cal_var, out_table=stat, pctlpts=100 90 75 50 25 10 0);
 	PROC SORT DATA = &input_table.;
 		BY &by_var.
 		;
@@ -165,7 +165,7 @@ options validvarname=any; /* 支持中文变量名 */
 		;
 		VAR &cal_var.
 		;
-		OUTPUT OUT = &out_table. N = obs mean = mean std = std pctlpts = 100 90 75 50 25 10 0
+		OUTPUT OUT = &out_table. N = obs mean = mean std = std pctlpts = &pctlpts.
 		pctlpre = p;
 	QUIT;
 %MEND cal_dist;

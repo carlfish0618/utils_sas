@@ -157,8 +157,6 @@
 		ON A.year = B.year;
 	QUIT;
 
-
-
 	DATA &output_table.;
 		SET tt_summary_stat2 tt_summary_stat1;
 	RUN;
