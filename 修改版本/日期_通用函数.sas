@@ -9,6 +9,8 @@
 (7) gen_adjust_busdate：生成调仓日期（可以区分日频/月频/周频(允许周中某一天)
 (8) adjust_date_to_mapdate: 根据mapdate_table将rawdate_table对应到最近的一个日期(可以往前或者往后，包含或者不包含map_busdate当日)
 (9) move_date_offset：取相邻N期的日期
+(10) map_date_to_index: 将日期映射到index
+(11) cal_date_intval: 计算两个日期之间的间隔日(只包含头尾中的一个)
 
 ***/
 
@@ -179,20 +181,24 @@
 (3) end_date: 结束日期
 (4) rename: 是否进行重命名
 (5) type: 1- 特定日期 2- 第N个交易日
-(6) trade_day: 当type=1时，trade_day=0表示周一，6表示周日，以此类推（取值范围：0-6)。当type=2时，trade_day=1表示每周第一个交易日(取值范围：>0)。
+(6) trade_day: 当type=1时，trade_day=2表示周一，6表示周五，以此类推（取值范围：0-6)。当type=2时，trade_day=1表示每周第一个交易日(取值范围：>0)。
 **/
 /**　输出：
 (1) output_table: &rename.
 **/
 
-	
 %MACRO get_weekday_date(busday_table, start_date, end_date, rename, type, trade_day, output_table);
 	DATA tt_busdate;
 		SET &busday_table.(keep = date);
-		week = week(date); /* 在每一年中的第几周。从0开始 */
-		wd = weekday(date);
+		/* 在每一年中的第几周。从0开始。但可能的问题是，遇到跨年周会被分隔开*/
+/*		week = week(date); */
+		/** 修改20160105：采用朱世武方法->因为SAS设定1960年1月1日为第一周，而1960年1月1日为周五，所以第一周共有三天，
+		所以减3。而1960年1月1日至3日对应日期在SAS标准中分别为0，1，2，故前两周的int((date-3)/7)结果都为0，故再加上2 **/
+		week=int((date-3)/7+2); 
+		wd = weekday(date); 
 		year = year(date);
 	RUN;
+		
 	%IF %SYSEVALF(&type.=1) %THEN %DO;
 		DATA &output_table.(keep = date rename = (date = &rename.));
 			SET tt_busdate;
@@ -203,11 +209,11 @@
 	%ELSE %DO;
 		/** 年头和年末的week可能都为0 */
 		PROC SORT DATA = tt_busdate;
-			BY year week date;
+			BY week;
 		RUN;
 		DATA tt_busdate;
 			SET tt_busdate;
-			BY year week;
+			BY week;
 			RETAIN rank 0;
 			IF first.week THEN rank = 0;
 			rank + 1;
@@ -218,7 +224,7 @@
 			SELECT date AS &rename. 
 			FROM tt_busdate
 			WHERE rank <= &trade_day.
-			GROUP BY year(date), week
+			GROUP BY week
 			HAVING date = max(date);
 		QUIT; 
 		DATA &output_table.;
@@ -399,7 +405,7 @@
 
 /** 模块9: 取相邻N期的日期(以input_table中的date来定义相邻期) */
 /**
-(1) input_table: 要求日期都出现在busday_table中
+(1) input_table: 
 (2) date_col: 日期列
 (3) output_col: 输出后，对应的变量名
 (4) offset: 向前(负数)/向后(正数)几期
@@ -449,13 +455,75 @@
 	QUIT;
 %MEND move_date_offset;
 
+/* 模块10: 将日期映射到index*/
+/* 输入:
+	(1) busday_table: 日期表(date)
+	(2) raw_table: 待映射表
+	(3) date_col_name: 带映射表中的日期列 
+	(4) raw_table_edit: 输出结果
+	(5) index_name: 日期index的列名
+/* Output:
+	(1) raw_table_edit: raw_table with one column date_index added, can be replaced raw one*/
 
+%MACRO map_date_to_index(busday_table, raw_table, date_col_name, raw_table_edit, index_name=date_index);
+	
+	PROC SORT DATA = &busday_table;
+		BY date;
+	RUN;
+
+	DATA tbusday;
+		SET &busday_table;
+		index = _N_;
+	RUN;
+
+	PROC SQL;
+		CREATE TABLE ttmp AS
+		SELECT A.*, B.index AS &index_name.
+		FROM &raw_table. A LEFT JOIN tbusday B
+		ON A.&date_col_name = B.date;
+	QUIT;
+
+	DATA &raw_table_edit;
+		SET ttmp;
+	RUN;
+
+	PROC SQL;
+		DROP TABLE ttmp, tbusday;
+	QUIT;
+
+%MEND map_date_to_index;
+
+/* 模块11: 计算两个日期之间的间隔日(只包含头尾中的一个) */
+/** 输入：
+(1) busday_table: 日期表(date)
+(2) input_table: date1和date2，要求都出现在busday_table中
+(3) date1: 开始日期
+(4) date2: 结束日期
+(5) intval_col: 输出表中intval_index的值
+**/
+
+%MACRO cal_date_intval(busday_table, input_table, date1, date2, intval_col, output_table);
+	DATA m_input;
+		SET &input_table.;
+	RUN;
+	%map_date_to_index(busday_table=&busday_table., raw_table=m_input, date_col_name=&date1., 
+							raw_table_edit=m_input, index_name=date1_index);
+	%map_date_to_index(busday_table=&busday_table., raw_table=m_input, date_col_name=&date2., 
+							raw_table_edit=m_input, index_name=date2_index);
+	DATA &output_table.(drop = date1_index date2_index);
+		SET m_input;
+		&intval_col. = date2_index - date1_index;
+	RUN;
+	PROC SQL;
+		DROP TABLE m_input;
+	QUIT;
+%MEND cal_date_intval;
 			
 
 
 
 
-
+/******************************** 以下暂时用不到，未做修改 ************************************/
 
 /* module 2: create a subsets and new global macro */
 /* Input: 
@@ -501,45 +569,7 @@
 %MEND date_subset;
 
 
-/* module 3: mapping date to its order number */
-/* Input:
-	(1) busday_table: datasets
-	(2) raw_table: datasets 
-	(3) date_col_name: colname for the date in raw_table 
-	(4) raw_table_edit: datasets*/
-/* Output:
-	(1) raw_table_edit: raw_table with one column date_index added, can be replaced raw one*/
-/* Datasets:
-	(1) (input) busday_table: date
-	(2) (input) raw_table: &date_col_name and other columns */
 
-%MACRO map_date_to_index(busday_table, raw_table, date_col_name, raw_table_edit, index_name=date_index);
-	
-	PROC SORT DATA = &busday_table;
-		BY date;
-	RUN;
-
-	DATA tbusday;
-		SET &busday_table;
-		index = _N_;
-	RUN;
-
-	PROC SQL;
-		CREATE TABLE ttmp AS
-		SELECT A.*, B.index AS &index_name.
-		FROM &raw_table. A LEFT JOIN tbusday B
-		ON A.&date_col_name = B.date;
-	QUIT;
-
-	DATA &raw_table_edit;
-		SET ttmp;
-	RUN;
-
-	PROC SQL;
-		DROP TABLE ttmp, tbusday;
-	QUIT;
-
-%MEND map_date_to_index;
 
 /* 模块3: 根据起始日和持有日，计算卖出日期；如果是超过当前日期，则标注，暂不处理 */
 /* 要求event_table需要有的列，包括stock_code, date, max_day */
@@ -611,6 +641,6 @@
 		DROP TABLE tt_busday, tmp;
 	QUIT;
 
-%MEND;
+%MEND adjust_to_week;
 
 

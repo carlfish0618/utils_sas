@@ -6,13 +6,10 @@
 (2) granger_test: 格兰杰检验
 (3) test_stationarity: 稳定性检验
 (4) test_single_var_corr：检验单变量跨期间的相关性
+(5) filter_outlier: 剔除异常值 (需要用到：因子计算_通用函数中的cal_percentile)
 ****/ 
 
 /** =======================================================================**/
-
-
-options validvarname=any; /* 支持中文变量名 */
-
 
 /** 模块1: 计算pearson和spearman相关系数 */
 %MACRO cal_coef(data, var1, var2, output_s = corr_s, output_p = corr_p);
@@ -222,3 +219,37 @@ options validvarname=any; /* 支持中文变量名 */
 	QUIT;
 
 %MEND test_single_var_corr;
+
+
+/*** 模块5：剔除异常值，仅保留特定区间的取值 **/
+%MACRO filter_outlier(input_table, colname, output_table, upper=99, lower=1, group_var=end_date, is_filter=1);
+	%cal_percentitle(&input_table., &colname., &lower., pct&lower., group_var=&group_var.);
+	%cal_percentitle(&input_table., &colname., &upper., pct&upper., group_var=&group_var.);
+	PROC SQL;
+		CREATE TABLE tt_raw AS
+		SELECT A.*, B.pct&lower., C.pct&upper.
+		FROM &input_table. A LEFT JOIN pct&lower. B
+		ON A.&group_var. = B.&group_var.
+		LEFT JOIN pct&upper. C
+		ON A.&group_var. = C.&group_var.
+		ORDER BY A.&group_var.;
+	QUIT;
+	%IF %SYSEVALF(&is_filter.=0) %THEN %DO;   
+		/* winsorize */
+		DATA &output_table.;
+			SET tt_raw;
+			IF not missing(&colname.) AND &colname. > pct&upper. THEN &colname. = pct&upper.;
+			ELSE IF not missing(&colname.) AND &colname. < pct&lower. THEN &colname. = pct&lower.;
+		RUN;
+	%END;
+	%ELSE %DO;   /* 替换初始值 */
+		DATA &output_table.;
+			SET tt_raw;
+			IF not missing(&colname.) AND &colname. > pct&upper. THEN delete;
+			ELSE IF not missing(&colname.) AND &colname. < pct&lower. THEN delete;
+		RUN;
+	%END;
+	PROC SQL;
+		DROP TABLE tt_raw, pct&lower., pct&upper.;
+	QUIT;
+%MEND filter_outlier;

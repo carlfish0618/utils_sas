@@ -11,6 +11,7 @@
 (3) cal_stock_wt_ret: 根据收益率确定组合每天个股准确的weight和单日收益（该版本无需每天迭代计算) --> !!需要用到外部表busday+hqinfo
 (4) cal_stock_wt_ret_loop: 根据收益率确定组合每天个股准确的weight和单日收益（迭代版本，用于验证) --> !!需要用到外部表busday+hqinfo
 (5) cal_portfolio_ret: 计算组合的收益和alpha等
+(6) adjust_pool_mdf: 剔除不能买入的股票
 ****/ 
 
 /*** 输入的全局表:
@@ -28,17 +29,20 @@
 /** 输入: 
 (1) stock_pool: date / stock_code/ weight/其他
 (2) adjust_date_table: date (如果stock_pool的日期超出adjust_table的范围，将无效。 如果adjust_table中有stock_pool没有的日期，则认为当天股票池中没有股票)
-(3) move_date_forward: 是否需要将date自动往前调整一个交易日，作为end_date  **/
+(3) move_date_forward: 是否需要将date自动往前调整一个交易日，作为end_date。1-向前调整 0-不用
+(4) busday_table: date
 /** 输出:
 (1) output_stock_pool: end_date/effective_date/stock_code/weight/其他 **/
+
 
 /** 特殊说明: 正常情况下，都认为如果股票池信号是在前一天收盘后至12:00生成的，即date是昨天的日期，则设定end_date = date, effective_date为end_date下一个交易日 
   		  特殊情况下，如果股票池信号是在今天0:00-开盘前生成的，即date是今天的日期，则在生成调仓记录的时候，应将date自动往前调整一个交易日。
 		  特殊情况的处理主要是为了统一 **/
 
-%MACRO gen_adjust_pool(stock_pool, adjust_date_table, move_date_forward, output_stock_pool);
+
+%MACRO gen_adjust_pool(stock_pool, adjust_date_table, move_date_forward, output_stock_pool, busday_table = busday);
 	DATA tt;
-		SET busday;
+		SET &busday_table.;
 	RUN;
 	PROC SORT DATA = tt;
 		BY date;
@@ -70,15 +74,26 @@
 		IF missing(effective_date) THEN effective_date = end_date + 1; /** 若是最新的一天，则以明天作为effective_date */
 		FORMAT effective_date end_date mmddyy10.;
 	RUN;
-	PROC SQL;
-		CREATE TABLE &output_stock_pool. AS
-		SELECT *
-		FROM tmp2
-		WHERE end_date IN
-	   (SELECT end_date FROM &adjust_date_table.)  /* 只取调整日 */
-		ORDER BY end_date;
-	QUIT;
-
+	%IF %SYSEVALF(&move_date_forward.=0) %THEN %DO;
+		PROC SQL;
+			CREATE TABLE &output_stock_pool. AS
+			SELECT *
+			FROM tmp2
+			WHERE end_date IN
+		   (SELECT end_date FROM &adjust_date_table.)  /* 只取调整日 */
+			ORDER BY end_date;
+		QUIT;
+	%END;
+	%ELSE %DO;
+		PROC SQL;
+			CREATE TABLE &output_stock_pool. AS
+			SELECT *
+			FROM tmp2
+			WHERE effective_date IN
+		   (SELECT end_date FROM &adjust_date_table.)  /* 只取调整日 */
+			ORDER BY end_date;
+		QUIT;
+	%END;
 		
 	PROC SQL;
 		DROP TABLE tt, tmp2;
@@ -507,7 +522,7 @@
 
 		
 
-/** 模块4: 计算组合的收益 */
+/** 模块5: 计算组合的收益 */
 /** 输入: 
 (1) daily_stock_pool: date / stock_code/open_wt(open_wt_c)/daily_ret(daily_ret_c) / (其他)
 (2) type(logical): 1- 以“基于前收盘价”计算的权重为基准计算; 0- 以“基于复权因子”计算的权重为基准计算
@@ -538,7 +553,7 @@
 		CREATE TABLE tt_summary_day AS
 		SELECT date, sum(open_wt>0) AS nstock,
 /*		((sum(adjust_weight*accum_ret/100)+1)/(sum(adjust_weight*pre_accum_ret/100)+1)-1)*100 AS daily_ret_p,*/
-		sum(open_wt*daily_ret) AS daily_ret
+		coalesce(sum(open_wt*daily_ret),0) AS daily_ret   /** 缺失，记为0 */
 		FROM tt_stock_pool
 		GROUP BY date;
 	QUIT;
@@ -554,8 +569,44 @@
 	RUN;
 
 	PROC SQL;
-		DROP TABLE tt_summary_day;
+		DROP TABLE tt_summary_day, tt_stock_pool;
 	QUIT;
 %MEND cal_portfolio_ret;
 
 
+/*** 模块5: 针对test_pool剔除不能买入的股票 */
+/** 输入: 
+(1) stock_pool: 调仓组合end_date/effective_date/stock_code/ weight /(其他) --> gen_adjust_pool的结果
+(2) hq_table: 个股行情数据，包括end_date/stock_code/close/factor/vol/high/low/open等
+(3) threshold_rtn: 临界值
+/** 输出:
+       (1) output_table: 剔除不能买入的个股
+**/
+
+%MACRO adjust_pool_mdf(stock_pool, hq_table, output_table, threshold_rtn=0.095);
+	PROC SQL;
+		CREATE TABLE tt_hq_table AS
+		SELECT *
+		FROM &hq_table.
+		WHERE stock_code IN (SELECT stock_code FROM &stock_pool.)
+		AND end_date >= (SELECT min(effective_date) FROM &stock_pool.)
+		AND end_date <= (SELECT max(effective_date) FROM &stock_pool.);
+	QUIT;
+	
+	/** 剔除不能买入的个股 */
+	PROC SQL;
+		CREATE TABLE tmp AS
+		SELECT A.*
+		FROM &stock_pool. A LEFT JOIN tt_hq_table B
+		ON B.stock_code = A.stock_code AND B.end_date = A.effective_date
+		WHERE B.vol >0 AND (B.low < B.high ) AND round(close/pre_close-1,0.01)<=&threshold_rtn.  /* 涨幅不超过限定 */
+		ORDER BY A.end_date, A.stock_code;
+	QUIT;
+
+	 DATA &output_table.;
+		SET tmp;
+	 RUN;
+	 PROC SQL;
+		DROP TABLE tt_hq_table, tmp;
+	 QUIT;
+%MEND adjust_pool_mdf;

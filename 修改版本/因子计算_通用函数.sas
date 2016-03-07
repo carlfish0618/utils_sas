@@ -33,17 +33,17 @@
 
 /** 说明: 方法说明在: http://en.wikipedia.org/wiki/Percentile 中Excel的方法 **/
 
-%MACRO cal_percentitle(input_table, colname, pct, output_table);
+%MACRO cal_percentitle(input_table, colname, pct, output_table, group_var=end_date);
 	PROC SORT DATA = &input_table.;
-		BY end_date &colname.;
+		BY &group_var. &colname.;
 	RUN;
 	/** Step1: 计算每天非空的样本数 */
 	PROC SQL;
 		CREATE TABLE tt_intval AS
-		SELECT end_date, count(1) AS nobs
+		SELECT &group_var., count(1) AS nobs
 		FROM &input_table.
 		WHERE not missing(&colname.)
-		GROUP BY end_date;
+		GROUP BY &group_var.;
 	QUIT;
 	DATA tt_intval;
 		SET tt_intval;
@@ -53,32 +53,32 @@
 	RUN;
 	/** Step2: 给原始数据排序 */
 	DATA tt_nomissing;
-		SET &input_table.(keep = end_date stock_code &colname.);
+		SET &input_table.(keep = &group_var. &colname.);
 		IF not missing(&colname.);
 	RUN;
 	PROC SORT DATA = tt_nomissing;
-		BY end_Date &colname.;
+		BY &group_var. &colname.;
 	RUN;
 	DATA tt_nomissing;
 		SET tt_nomissing;
-		BY end_Date;
+		BY &group_var.;
 		RETAIN rank 0;
-		IF first.end_date THEN rank = 0;
+		IF first.&group_var. THEN rank = 0;
 		rank + 1;
 	RUN;
 	PROC SQL;
 		CREATE TABLE tt_intval2 AS
 		SELECT A.*, B.&colname. AS v_1, C.&colname. AS v_n, D.&colname. AS v_k, E.&colname. AS v_k1
 		FROM tt_intval A LEFT JOIN tt_nomissing B
-		ON A.end_date = B.end_date AND B.rank = 1
+		ON A.&group_var. = B.&group_var. AND B.rank = 1
 		LEFT JOIN tt_nomissing C
-		ON A.end_Date = C.end_date AND C.rank = A.nobs
+		ON A.&group_var. = C.&group_var. AND C.rank = A.nobs
 		LEFT JOIN tt_nomissing D
-		ON A.end_Date = D.end_Date AND D.rank = A.nk
+		ON A.&group_var. = D.&group_var. AND D.rank = A.nk
 		LEFT JOIN tt_nomissing E
-		ON A.end_date = E.end_date AND E.rank = A.nk+1;
+		ON A.&group_var. = E.&group_var. AND E.rank = A.nk+1;
 	QUIT;
-	DATA tt_intval(keep = end_date pct&pct.);
+	DATA tt_intval(keep = &group_var. pct&pct.);
 		SET tt_intval2;
 		IF nk = 0 THEN pct&pct. = v_1;
 		ELSE IF nk = nobs THEN pct&pct. = v_n;
@@ -184,7 +184,7 @@
 (1) output_table: 因子列都由标准化后得分替换。
 **/
 
-%MACRO 	normalize_multi_score(input_table, output_table, exclude_list=(), include_list=(), type=1);
+%MACRO 	normalize_multi_score(input_table, output_table, exclude_list=(''), include_list=(''), type=1);
 	DATA rr_result;
 		SET &input_table.;
 	RUN;
@@ -297,7 +297,7 @@
 (1) output_table: 因子列都由winsorize后得分替换。
 **/
 
-%MACRO 	winsorize_multi_score(input_table, output_table, exclude_list=(), include_list=(), type=1, upper=3, lower = -3);
+%MACRO 	winsorize_multi_score(input_table, output_table, exclude_list=(''), include_list=(''), type=1, upper=3, lower = -3);
 	DATA rr_result;
 		SET &input_table.;
 	RUN;
@@ -428,7 +428,7 @@
 /**　输出：
 (1) output_table: input_table + &colname._mdf(is_replace=0)
 **/
-%MACRO weighted_multi_factor(input_table, weight_table, output_table, exclude_list=(), include_list=(), type=1);
+%MACRO weighted_multi_factor(input_table, weight_table, output_table, exclude_list=(''), include_list=(''), type=1);
 	DATA rr_result;
 		SET &input_table.;
 	RUN;
@@ -581,7 +581,7 @@
 **/
 
 /** 注: exclude_list中需要把&group_name等非因子列的剔除 */
-%MACRO 	neutralize_multi_score(input_table, output_table,group_name, exclude_list=(), include_list=(),type=1);
+%MACRO 	neutralize_multi_score(input_table, output_table,group_name, exclude_list=(''), include_list=(''),type=1);
 	DATA rr_result;
 		SET &input_table.;
 	RUN;
@@ -642,7 +642,7 @@
 (2) colname(character): 因子名
 (3) type: 1-根据百分点进行分组(适合连续型因子) 2- 根据绝对值进行分组(适合离散型因子) 3-根据绝对排名进行分组
 (4) threshold: type=1时，表示需要划分的百分位点(如: 50/90等); type=2时，表示绝对值; type=3时，表示绝对排名
-(4) is_decrease: 对于type=1或者2: 0-选小,1-选大,2-恰好相等; 对于type=3,0-最小的前N位, 1-最大的前N位
+(4) is_top: 对于type=1或者2: 0-选小,1-选大,2-恰好相等; 对于type=3,0-最小的前N位, 1-最大的前N位, 2-第N位(基本不用)
 (5) is_cut: 1-输出只选取最终的子集。 0-保留全样本，但新增字段cut_mark(1-required 0-filter)
 
 
@@ -650,7 +650,7 @@
 (1) output_table: input_table(is_cut=1:只保留符合要求的子集) + cut_mark(is_cut=0)
 **/
 
-%MACRO cut_subset(input_table, colname, output_table, type=1, threshold=50, is_decrease=1, is_cut=1);
+%MACRO cut_subset(input_table, colname, output_table, type=1, threshold=50, is_top=1, is_cut=1);
 	/** type=1或者type=2时，适合相同的模板 */
 	%IF %SYSEVALF(&type.=1) %THEN %DO;	
 		%cal_percentitle(&input_table., &colname., &threshold., pct_table);
@@ -690,7 +690,7 @@
 			IF first.end_date THEN increase_rank = 0;
 			increase_rank + 1;
 		RUN;
-		%IF %SYSEVALF(&is_decrease.=1) %THEN %DO;
+		%IF %SYSEVALF(&is_top.=1) %THEN %DO;
 			PROC SQL;
 				CREATE TABLE pct_table AS  /* 构造一样的形式 */
 				SELECT distinct end_date, &colname. AS threshold
@@ -701,7 +701,7 @@
 				ORDER BY end_date;
 			QUIT;
 		%END;
-		%ELSE %IF %SYSEVALF(&is_decrease.=0) %THEN %DO;
+		%ELSE %IF %SYSEVALF(&is_top.=0) %THEN %DO;
 			PROC SQL;
 				CREATE TABLE pct_table AS  /* 构造一样的形式 */
 				SELECT distinct end_date, &colname. AS threshold
@@ -721,21 +721,21 @@
 		ON A.end_date = B.end_date
 		ORDER BY A.end_date, A.&colname.;
 	QUIT;
- 	%IF %SYSEVALF(&is_decrease.=1) %THEN %DO;
+ 	%IF %SYSEVALF(&is_top.=1) %THEN %DO;
 		DATA &output_table.(drop = threshold);
 			SET tmp;
 			IF &colname. >= threshold THEN cut_mark = 1;
 			ELSE cut_mark = 0;
 		RUN;
 	%END;
-	%ELSE %IF %SYSEVALF(&is_decrease.=0) %THEN %DO;
+	%ELSE %IF %SYSEVALF(&is_top.=0) %THEN %DO;
 		DATA &output_table.(drop = threshold);
 			SET tmp;
 			IF &colname. <= threshold THEN cut_mark = 1;
 			ELSE cut_mark = 0;
 		RUN;
 	%END;
-	%ELSE %IF %SYSEVALF(&is_decrease.=2) %THEN %DO;
+	%ELSE %IF %SYSEVALF(&is_top.=2) %THEN %DO;
 		DATA &output_table.(drop = threshold);
 			SET tmp;
 			IF &colname. = threshold THEN cut_mark = 1;

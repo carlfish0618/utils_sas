@@ -6,6 +6,8 @@
 	(3) loop_factor_ic: 计算多个因子的IC和胜率
 	(4) single_factor_score: 根据因子得分，排序并打分
 	(5) single_score_ret： 根据分组统计收益
+	(6) test_single_factor_ic: 在single_factor_ic基础上引入cover，同时仅计算spearman_ic，并默认输出
+	(7) test_multiple_factor_ic: 与loog_factor_ic相似，但此处调用test_single_factor_ic 
 	****/ 
 
 
@@ -25,8 +27,6 @@
 **/
 
 /** 注：要求至少date_table中需要包含date_f0!!! 即get_date_windows中设定的start_win <=0并且end_win>=0 **/
-
-
 
 %MACRO cal_intval_return(raw_table, group_name, price_name, date_table, output_table, is_single = 1);
 
@@ -207,17 +207,20 @@
 **/
 
 /**　输出：
-(1) &fname._stat: end_date/n_obs_f1/p_ic_f1/s_ic_f1 (日期列表以factor_table中的end_date为准)
+(1) output_table: end_date/n_obs_f1/p_ic_f1/s_ic_f1 (日期列表以factor_table中的end_date为准)
 **/
+
 %MACRO single_factor_ic(factor_table, return_table, group_name, fname, output_table, type=1);
 	DATA &fname._t_raw;
 		SET &factor_table.(keep = end_date &group_name. &fname.);
 		IF not missing(&fname.);
 	RUN;
+	/** 修改：2016-1-15，要求end_date要在return_table的end_date中。这样就不用要求factor_table和return_table频率需要一致*/
 	PROC SQL;
-		CREATE TABLE &fname._stat AS
+		CREATE TABLE &output_table. AS
 		SELECT distinct end_date 
 		FROM &fname._t_raw
+		WHERE end_date IN (SELECT end_date FROM &return_table.)
 		ORDER BY end_date;
 	QUIT;
 
@@ -281,14 +284,14 @@
 			PROC SQL;
 				CREATE TABLE tmp AS
 				SELECT A.*, B.nobs_&var_i., B.p_ic_&var_i., C.s_ic_&var_i.
-				FROM  &fname._stat A 
+				FROM  &output_table. A 
 				LEFT JOIN corr_p B
 				ON A.end_date = B.end_date
 				LEFT JOIN corr_s C
 				ON A.end_date = C.end_date
 				ORDER BY A.end_date;
 			QUIT;
-			DATA &fname._stat;
+			DATA &output_table.;
 				SET tmp;
 			RUN;
 		%END;
@@ -296,12 +299,12 @@
 			PROC SQL;
 				CREATE TABLE tmp AS
 				SELECT A.*,  B.p_ic_&var_i.
-				FROM  &fname._stat A 
+				FROM  &output_table. A 
 				LEFT JOIN corr_p B
 				ON A.end_date = B.end_date
 				ORDER BY A.end_date;
 			QUIT;
-			DATA &fname._stat;
+			DATA &output_table.;
 				SET tmp;
 			RUN;
 		%END;
@@ -309,12 +312,12 @@
 			PROC SQL;
 				CREATE TABLE tmp AS
 				SELECT A.*, C.s_ic_&var_i.
-				FROM  &fname._stat A 
+				FROM  &output_table. A 
 				LEFT JOIN corr_s C
 				ON A.end_date = C.end_date
 				ORDER BY A.end_date;
 			QUIT;
-			DATA &fname._stat;
+			DATA &output_table.;
 				SET tmp;
 			RUN;
 		%END;
@@ -322,17 +325,16 @@
 			PROC SQL;
 				CREATE TABLE tmp AS
 				SELECT A.*, B.nobs_&var_i.
-				FROM  &fname._stat A 
+				FROM  &output_table. A 
 				LEFT JOIN corr_p B
 				ON A.end_date = B.end_date
 				ORDER BY A.end_date;
 			QUIT;
-			DATA &fname._stat;
+			DATA &output_table.;
 				SET tmp;
 			RUN;
 		%END;
 	%END;
-
 	PROC SQL;
 		DROP TABLE tmp, corr_p, corr_s, &fname._t, var_list,&fname._t_raw;
 	QUIT;
@@ -348,14 +350,15 @@
 (3) group_name(character): 可以是stock_code/indus_code等，任何标识主体的列名
 (4) fname: 因子名称
 (5) type: 控制输出数据，1- 全部输出 2- p_ic 3- s_ic 4- n_obs
+(6) exclude_list: 要求大写，即剔除不测试的列
 **/
 
 /**　输出(每个因子)：
-(1) &fname._stat: end_date/n_obs_f1/p_ic_f1/s_ic_f1
+(1) &fname._ic: end_date/n_obs_f1/p_ic_f1/s_ic_f1
 **/
 
 
-%MACRO loop_factor_ic(factor_table, return_table, group_name, type=1);
+%MACRO loop_factor_ic(factor_table, return_table, group_name, type=1, exclude_list=(''));
 	/** 生成因子列表 */
 	PROC CONTENTS DATA = &factor_table. OUT = factor_list(keep = name) NOPRINT;
 	RUN;
@@ -363,6 +366,7 @@
 	DATA factor_list;
 		SET factor_list;
 		IF upcase(name) not IN ("END_DATE", "&group_name." );  /* 注意大小写 */
+		IF upcase(name) NOT IN &exclude_list.;
 	RUN;
 	PROC SQL NOPRINT;   /** 相互调用的关系，不要与single_factor_ic中的宏有重复 */
 		SELECT name, count(1) 
@@ -373,7 +377,7 @@
 			
 	%DO i = 1 %TO &nfactors.;
 		%LET fname =  %scan(&factor_list.,&i., ' ');
-		%single_factor_ic(&factor_table., &return_table., &group_name., &fname., &type.);
+		%single_factor_ic(&factor_table., &return_table., &group_name., &fname.,&fname._ic, type=&type.);
 	%END;
 	PROC SQL;
 		DROP TABLE factor_list;
@@ -488,6 +492,9 @@
 	DATA &output_table.; /** 对于因子值缺失的股票，则没有对应因子的得分 */
 		SET tmp;
 	RUN;
+	PROC SQL;
+		DROP TABLE tmp, tt_rank, tt_raw_table;
+	QUIT;
 %MEND single_factor_score;
 
 
@@ -625,3 +632,79 @@
 		DROP TABLE tmp,&score_name._t, tt_result, var_list;
 	QUIT;
 %MEND single_score_ret;
+
+
+/*** 模块6：利用single_factor_ic计算spearman_ic，并同时计算cover */
+/** 默认输出：
+(1) &fname._cover
+(2) &fname._ic
+（3） &fname._dist
+**/
+
+
+
+%MACRO test_single_factor_ic(factor_table, return_table, group_name, fname);
+	/** 1- 因子覆盖度 */
+	DATA tt_test_pool(keep = end_date stock_code &fname.);
+		SET &factor_table.;
+	RUN;
+	PROC SQL;
+		CREATE TABLE &fname._cover AS
+		SELECT end_date, sum(not missing(&fname.))/count(1) AS pct
+		FROM tt_test_pool
+		GROUP BY end_date;
+	QUIT;
+
+	/** Step2: 因子IC **/
+	%single_factor_ic(factor_table=tt_test_pool, return_table=&return_table., group_name=&group_name., 
+			fname=&fname., output_table=&fname._ic, type=3);
+
+	/** Step3: 因子分布情况 */
+	%cal_dist(input_table=tt_test_pool, by_var=end_date, cal_var=&fname., out_table=stat);
+	PROC SQL;
+		CREATE TABLE &fname._dist AS
+		SELECT sum(obs) AS nobs,
+		mean(mean) AS mean,
+		mean(std) AS std,
+		mean(p100) AS p100,
+		mean(p90) AS p90,
+		mean(p75) AS p75,
+		mean(p50) AS p50,
+		mean(p25) AS p25,
+		mean(p10) AS p10,
+		mean(p0) AS p0
+	FROM stat;
+	QUIT;
+
+	PROC SQL;
+		DROP TABLE tt_test_pool, stat;
+	QUIT;
+%MEND test_single_factor_ic;
+
+/*** 模块7：调用test_factor_ic，而非single_factor_ic分析多个因子*/
+%MACRO 	test_multiple_factor_ic(factor_table, return_table, group_name, exclude_list=(''));
+	PROC CONTENTS DATA = &factor_table. OUT = tt_varlist2(keep = name) NOPRINT;
+	RUN;
+	DATA tt_varlist2;
+		SET tt_varlist2;
+		IF upcase(name) NOT IN ("END_DATE", "STOCK_CODE");
+		IF upcase(name) NOT IN &exclude_list.;
+	RUN;
+	
+	PROC SQL NOPRINT;
+		SELECT name, count(1)
+		 INTO :name_list2 SEPARATED BY ' ',
+               :nfactors2
+          FROM tt_varlist2;
+     QUIT;
+           
+     %DO i = 1 %TO &nfactors2.;
+          %LET fname =  %scan(&name_list2.,&i., ' ');
+		  %test_single_factor_ic(factor_table=&factor_table., return_table=&return_table., 
+								group_name=&group_name., fname=&fname.);
+     %END;
+	PROC SQL;
+		DROP TABLE tt_varlist2;
+	QUIT;
+%MEND test_multiple_factor_ic;
+

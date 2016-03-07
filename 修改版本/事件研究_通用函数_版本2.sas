@@ -86,6 +86,7 @@
 
 
 /* 模块1C: 根据事件买入和卖出日期，确定可交易区间*/
+/** !!!! 注：这里的日期认为是信息可得，且可交易的日期。如果信息是在X日收盘后才可得到，则buy_col应该设定为X+1 */
 /* 输入
 	(1) event_table: event_id / event_date(交易日) / stock_code /&buy_col. / &sell_col.
 	(2) buy_col: 买入日期
@@ -97,7 +98,7 @@
        (1) output_table: 在event_table基础上新增：trade_buy_date和trade_sell_date
 **/
 
-%MACRO event_gen_trade_date(event_table, buy_col, sell_col, busday_table, hq_table, output_table);
+%MACRO event_gen_trade_date(event_table, buy_col, sell_col, busday_table, hq_table, output_table, threshold_rtn=0.095);
 	PROC SQL;
 		CREATE TABLE tt_hq_table AS
 		SELECT *
@@ -115,7 +116,7 @@
 		ON B.stock_code = A.stock_code 
 		AND B.end_date >= A.&buy_col. 
 		AND B.end_date < A.&sell_col.
-		AND B.vol >0 AND (B.low < B.high ) AND close/pre_close-1<=0.095  /* 涨幅不超过9.5% */
+		AND B.vol >0 AND (B.low < B.high ) AND round(close/pre_close-1,0.01)<=&threshold_rtn.  /* 涨幅不超过限定 */
 		GROUP BY event_id;
 	QUIT;
 	
@@ -126,8 +127,9 @@
 		FROM &event_table. A LEFT JOIN tt_hq_table B
 		ON A.stock_code = B.stock_code
 		AND B.end_date >= A.&sell_col.
-		AND B.vol >0 AND (B.low < B.high ) AND close/pre_close-1 >= -0.095  
-/*		AND close/pre_close-1 >= -0.095    /** 只考虑跌停不能卖，没考虑停牌不能卖 */*/
+		AND B.vol >0 AND (B.low < B.high ) AND round(close/pre_close-1,0.01) >= -&threshold_rtn.  
+		 /** 只考虑跌停不能卖，不考虑停牌不能卖 */ 
+		AND round(close/pre_close-1,0.01) >= -&threshold_rtn.   
 		GROUP BY A.event_id;
 	QUIT;
 	PROC SQL;
@@ -318,7 +320,7 @@
 	QUIT;
 %MEND event_get_marketdata;
 
-/** 模块3：标注事件窗口是否超出上市、退市，以及是否涨跌超过10%+(一般是复牌后行为) */
+/** 模块3：标注单日事件窗口是否超出上市、退市，以及是否涨跌超过10%+(一般是复牌后行为) */
 /* 输入
 	(1) rtn_table: event_get_marketdata的输出
 	(2) stock_info_table: 个股基本信息(stock_code/list_date/delist_date/is_delist/is_st)
@@ -338,15 +340,20 @@
 		ON A.stock_code = C.stock_code
 		ORDER BY event_id, win_date;
 	QUIT;
+	/** 顺序决定了优先级 */
 	PROC SQL;
 		UPDATE tmp 
 		SET filter = CASE
 			WHEN win_date <= list_date OR win_date >= delist_date THEN 30  /** 超出上市-退市记录 */
-			WHEN is_st = 1 AND abs(rtn)>=0.09 THEN 40
-			WHEN is_st = 0 AND abs(rtn)>=0.15 THEN 41
 			WHEN missing(rtn) THEN 50  /* 数据本身缺失 */
-			WHEN is_st = 1 AND abs(rtn)>=0.045 THEN 60
-			WHEN is_st = 0 AND abs(rtn)>=0.095 THEN 61
+			WHEN is_st = 1 AND abs(rtn)>=0.045 AND rtn>0 THEN 60
+			WHEN is_st = 1 AND abs(rtn)>=0.045 AND rtn<0 THEN 61
+			WHEN is_st = 0 AND abs(rtn)>=0.095 AND rtn >0 THEN 62
+			WHEN is_st = 0 AND abs(rtn)>=0.095 AND rtn <0 THEN 63
+			WHEN is_st = 1 AND abs(rtn)>=0.09 AND rtn >0 THEN 40
+			WHEN is_st = 1 AND abs(rtn)>= 0.09 AND rtn <0 THEN 41
+			WHEN is_st = 0 AND abs(rtn)>=0.15 AND rtn >0  THEN 42
+			WHEN is_st = 0 AND abs(rtn)>=0.15 AND rtn <0  THEN 43
 			ELSE filter
 		END;
 		ALTER TABLE tmp
@@ -360,6 +367,84 @@
 	QUIT;
 
 %MEND event_mark_win;
+
+/** 模块3B：标识连续出现单日某种状态(如连续停牌，或者涨停)的情况*/
+/** 主要用于预先分析，也可知道二次平滑的影响 */
+/* 输入
+	(1) rtn_table: event_mark_win()的输出(需要具备filter字段)
+	(2) buy_win: 买入日期(当日收盘买入，0-表示事件日，为常用设定)
+	(3) filter_set: 当filter落入该集合时需要对结果进行统计
+
+/** 输出:
+       (1) output_table: 在rtn_table基础上新增字段&invalid_start_win.和&ninvalid.：
+
+***/
+%MACRO event_mark_successive_win(rtn_table, buy_win, output_table, 
+			invalid_start_win=invalid_start_win, ninvalid = ninvalid, filter_set=(.));
+	/** 买入日之后 */
+	PROC SORT DATA = &rtn_table. OUT = tmp;
+		BY event_id win_date;
+	RUN;
+	DATA tmp(drop = invalid ss);
+		SET tmp;
+		BY event_id;
+		RETAIN invalid 0;
+		RETAIN ss .;
+		IF first.event_id THEN DO;
+			invalid = 0;
+			ss = .;
+		END;
+		IF win >= &buy_win. + 1 AND filter in &filter_set. THEN DO;
+			invalid + 1;
+			IF missing(ss) THEN ss = win;
+		END;
+		ELSE DO;
+			invalid = 0;  /* 重新复位 */
+			ss = .;
+		END;
+		&ninvalid. = invalid;
+		&invalid_start_win. = ss;
+	RUN;
+
+	/** 买入之前 */
+	PROC SORT DATA = tmp OUT = tmp;
+		BY event_id descending win_date;
+	RUN;
+	DATA tmp(drop = ss invalid);
+		SET tmp;
+		BY event_id;
+		RETAIN invalid 0;
+		RETAIN ss .;
+		IF first.event_id THEN DO;
+			invalid = 0;
+			ss = .;
+		END;
+		/* 这里改为win<=&buy_win.而不用&buy_win-1是为了更好地统计连续性*/
+		/* 这是跟二次平滑中所使用的不同。因为那里buy_win这一天不影响任何一段累计收益 */
+		IF win <= &buy_win. AND filter in &filter_set. THEN DO;	
+			invalid + 1;  
+			IF missing(ss) THEN ss = win;
+		END;
+		ELSE DO;
+			invalid = 0;
+			ss = .;
+		END;
+		/* 更新字段 */
+		IF win <= &buy_win. THEN DO;
+			&ninvalid. = invalid;
+			&invalid_start_win. = ss;
+		END;
+	RUN;
+	
+	PROC SORT DATA = tmp OUT = &output_table.;
+		BY event_id win_date;
+	RUN;
+	PROC SQL;
+		DROP TABLE tmp;
+	QUIT;
+%MEND event_mark_successive_win;
+
+
 
 
 /** 模块4：计算累计收益率(用单日累乘的方法)*/
@@ -510,7 +595,7 @@
 
 
 /** 输出:
-       (1) output_table: 在rtn_table基础上新增：
+       (1) output_table: 在rtn_table基础上替换以下字段的值：
 			(a) rel_rtn_&suffix.
 			(b) accum_rtn_&suffix.
 			(c) accum_alpha_&suffix.

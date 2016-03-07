@@ -12,6 +12,8 @@
 (8) gen_macro_var_list: 生成宏变量
 (9) get_nearby_data: 取间隔N期的数据
 (10) output_to_csv: 输出到csv
+(11) import_txt: 从txt中读入
+(12) import_deli: 从csv等固定间隔符的文本中读入
 
 ****/ 
 
@@ -287,6 +289,7 @@ options validvarname=any; /* 支持中文变量名 */
 	QUIT;
 %MEND get_nearby_data;
 
+/** 模块10：输出到csv **/
 %MACRO output_to_csv(csv_path, input_table);
 	PROC EXPORT DATA = &input_table.
 		OUTFILE = "&csv_path."
@@ -295,4 +298,26 @@ options validvarname=any; /* 支持中文变量名 */
 	RUN;
 %MEND output_to_csv;
 
+/** 模块11：从txt读入 **/
+%MACRO import_txt(input_path, output_table);
+	PROC IMPORT OUT= &output_table. 
+            DATAFILE= "&input_path." 
+            DBMS=TAB REPLACE;
+     		GETNAMES=YES;
+     	DATAROW=2; 
+		GUESSINGROWS = 100000;
+	RUN;
+%MEND import_txt;
+
+/** 模块12：从csv等间隔文本读入 */
+%MACRO import_deli(input_path, output_table, deli=',');
+	PROC IMPORT OUT= &output_table. 
+            DATAFILE= "&input_path." 
+            DBMS=DLM REPLACE;
+			DELIMITER = &deli.;
+     		GETNAMES=YES;
+     	DATAROW=2; 
+		GUESSINGROWS = 100000;
+	RUN;
+%MEND import_deli;
   
